@@ -32,13 +32,21 @@ export async function PUT(req: NextRequest) {
     try {
         const { id, name, type, remote_path, log_path, start_command, stop_command, restart_command, backup_path } = await req.json();
 
+        // DEBUG: Log the restart_command value
+        console.log('[Modules PUT] Received data:');
+        console.log('[Modules PUT] restart_command:', restart_command);
+        console.log('[Modules PUT] Full payload:', { id, name, type, remote_path, log_path, start_command, stop_command, restart_command, backup_path });
+
         await pool.query(
             `UPDATE modules SET name = ?, type = ?, remote_path = ?, log_path = ?, start_command = ?, stop_command = ?, restart_command = ?, backup_path = ? WHERE id = ?`,
             [name, type, remote_path, log_path, start_command, stop_command, restart_command, backup_path, id]
         );
 
+        console.log('[Modules PUT] Update successful for module ID:', id);
+
         return NextResponse.json({ success: true });
     } catch (error: any) {
+        console.error('[Modules PUT] Error:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }

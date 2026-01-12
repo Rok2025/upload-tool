@@ -19,24 +19,53 @@ interface DeployLog {
     project_name: string;
     project_id: number;
     environment_name: string;
+    log_type: 'deploy' | 'restart' | 'stop' | null;
 }
 
 export default function HistoryPage() {
     const router = useRouter();
     const [logs, setLogs] = useState<DeployLog[]>([]);
+    const [projects, setProjects] = useState<any[]>([]);
+    const [environments, setEnvironments] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [statusFilter, setStatusFilter] = useState<string>('');
+    const [filters, setFilters] = useState({
+        status: '',
+        projectId: '',
+        moduleId: '',
+        environmentId: '',
+        moduleType: '',
+        logType: ''
+    });
     const [selectedLog, setSelectedLog] = useState<DeployLog | null>(null);
-    const [pagination, setPagination] = useState({ total: 0, limit: 50, offset: 0, hasMore: false });
+    const [pagination, setPagination] = useState({ total: 0, limit: 15, offset: 0, hasMore: false });
+    const [currentPage, setCurrentPage] = useState(1);
 
-    const fetchLogs = async (offset = 0) => {
+    useEffect(() => {
+        const loadInitialData = async () => {
+            const [projRes, envRes] = await Promise.all([
+                fetch('/api/projects'),
+                fetch('/api/environments')
+            ]);
+            if (projRes.ok) setProjects(await projRes.json());
+            if (envRes.ok) setEnvironments(await envRes.json());
+        };
+        loadInitialData();
+    }, []);
+
+    const fetchLogs = async (page = 1) => {
         try {
             setLoading(true);
+            const limit = 15;
+            const offset = (page - 1) * limit;
             const params = new URLSearchParams({
-                limit: '50',
+                limit: limit.toString(),
                 offset: offset.toString(),
             });
-            if (statusFilter) params.append('status', statusFilter);
+            if (filters.status) params.append('status', filters.status);
+            if (filters.projectId) params.append('projectId', filters.projectId);
+            if (filters.moduleId) params.append('moduleId', filters.moduleId);
+            if (filters.environmentId) params.append('environmentId', filters.environmentId);
+            if (filters.logType) params.append('logType', filters.logType);
 
             const res = await fetch(`/api/deploy-logs?${params}`);
             if (!res.ok) {
@@ -48,12 +77,16 @@ export default function HistoryPage() {
             }
 
             const data = await res.json();
-            if (offset === 0) {
-                setLogs(data.logs);
-            } else {
-                setLogs(prev => [...prev, ...data.logs]);
+            let fetchedLogs = data.logs;
+
+            // Client-side filtering for moduleType if API doesn't support it yet
+            if (filters.moduleType) {
+                fetchedLogs = fetchedLogs.filter((l: any) => l.module_type === filters.moduleType);
             }
+
+            setLogs(fetchedLogs);
             setPagination(data.pagination);
+            setCurrentPage(page);
         } catch (error) {
             console.error('Error fetching logs:', error);
         } finally {
@@ -62,12 +95,14 @@ export default function HistoryPage() {
     };
 
     useEffect(() => {
-        fetchLogs(0);
-    }, [statusFilter]);
+        fetchLogs(1);
+    }, [filters]);
 
-    const loadMore = () => {
-        if (pagination.hasMore && !loading) {
-            fetchLogs(pagination.offset + pagination.limit);
+    const totalPages = Math.ceil(pagination.total / pagination.limit);
+
+    const handlePageChange = (page: number) => {
+        if (page >= 1 && page <= totalPages && !loading) {
+            fetchLogs(page);
         }
     };
 
@@ -104,146 +139,484 @@ export default function HistoryPage() {
         }
     };
 
-    return (
-        <div className="p-8">
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-bold">部署历史</h1>
-                <div className="flex gap-4 items-center">
-                    <select
-                        value={statusFilter}
-                        onChange={(e) => setStatusFilter(e.target.value)}
-                        className="px-4 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700"
-                    >
-                        <option value="">全部状态</option>
-                        <option value="success">成功</option>
-                        <option value="failed">失败</option>
-                    </select>
-                    <span className="text-sm text-gray-600 dark:text-gray-400">
-                        共 {pagination.total} 条记录
-                    </span>
-                </div>
-            </div>
+    const getLogTypeInfo = (type: string | null) => {
+        switch (type) {
+            case 'restart': return { text: '重启服务', color: 'bg-orange-100 text-orange-800 border-orange-200' };
+            case 'stop': return { text: '停止服务', color: 'bg-rose-100 text-rose-800 border-rose-200' };
+            case 'deploy':
+            default: return { text: '发包部署', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' };
+        }
+    };
 
-            {loading && logs.length === 0 ? (
-                <div className="text-center py-12">
-                    <div className="animate-spin inline-block w-8 h-8 border-4 border-current border-t-transparent text-blue-600 rounded-full" role="status">
-                        <span className="sr-only">加载中...</span>
+    return (
+        <div className="p-8 history-container">
+            <header className="mb-8">
+                <div className="flex justify-between items-end mb-2">
+                    <div>
+                        <h1 className="text-3xl font-extrabold text-slate-900 mb-1">部署历史</h1>
+                        <p className="text-slate-500 text-sm">查看项目发布记录与详细执行日志</p>
                     </div>
                 </div>
-            ) : logs.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">暂无部署记录</div>
-            ) : (
-                <>
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-                        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                            <thead className="bg-gray-50 dark:bg-gray-900">
+            </header>
+
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-none border border-slate-200 dark:border-slate-800 overflow-hidden">
+                {/* Integrated Filter Bar - Single Line Layout */}
+                <div className="filter-bar no-scrollbar">
+                    <div className="filter-item">
+                        <label className="filter-label">所属项目</label>
+                        <select
+                            value={filters.projectId}
+                            onChange={(e) => setFilters(prev => ({ ...prev, projectId: e.target.value, moduleId: '' }))}
+                            className="compact-select"
+                        >
+                            <option value="">全部项目</option>
+                            {projects.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="filter-item">
+                        <label className="filter-label">具体模块</label>
+                        <select
+                            value={filters.moduleId}
+                            onChange={(e) => setFilters(prev => ({ ...prev, moduleId: e.target.value }))}
+                            className="compact-select"
+                            disabled={!filters.projectId}
+                        >
+                            <option value="">全部模块</option>
+                            {projects.find(p => p.id === parseInt(filters.projectId))?.modules?.map((m: any) => (
+                                <option key={m.id} value={m.id}>{m.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="filter-item">
+                        <label className="filter-label">服务器</label>
+                        <select
+                            value={filters.environmentId}
+                            onChange={(e) => setFilters(prev => ({ ...prev, environmentId: e.target.value }))}
+                            className="compact-select"
+                        >
+                            <option value="">全部环境</option>
+                            {environments.map(e => (
+                                <option key={e.id} value={e.id}>{e.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="filter-item">
+                        <label className="filter-label">任务状态</label>
+                        <select
+                            value={filters.status}
+                            onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
+                            className="compact-select"
+                        >
+                            <option value="">全部状态</option>
+                            <option value="success">成功</option>
+                            <option value="failed">失败</option>
+                            <option value="deploying">进行中</option>
+                        </select>
+                    </div>
+
+                    <div className="filter-item">
+                        <label className="filter-label">操作类型</label>
+                        <select
+                            value={filters.logType}
+                            onChange={(e) => setFilters(prev => ({ ...prev, logType: e.target.value }))}
+                            className="compact-select"
+                        >
+                            <option value="">全部类型</option>
+                            <option value="deploy">发包部署</option>
+                            <option value="restart">重启服务</option>
+                            <option value="stop">停止服务</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div className="relative">
+                    {loading && (
+                        <div className="absolute inset-0 bg-white/50 dark:bg-slate-900/50 backdrop-blur-[1px] z-10 flex items-center justify-center">
+                            <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full"></div>
+                        </div>
+                    )}
+
+                    <table className="history-table">
+                        <thead>
+                            <tr>
+                                <th>时间</th>
+                                <th>操作人</th>
+                                <th>项目 → 模块</th>
+                                <th>服务器</th>
+                                <th>操作类型</th>
+                                <th className="text-center">状态</th>
+                                <th>版本标识</th>
+                                <th className="text-right">管理</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                            {logs.length === 0 ? (
                                 <tr>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">时间</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">用户</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">项目 → 模块</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">环境</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">状态</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">版本</th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">操作</th>
+                                    <td colSpan={7} className="text-center py-20 text-slate-400 font-medium">暂无部署记录</td>
                                 </tr>
-                            </thead>
-                            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                {logs.map((log) => (
-                                    <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                                            {formatDate(log.start_time)}
+                            ) : (
+                                logs.map((log) => (
+                                    <tr key={log.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+                                        <td className="px-6 py-4">
+                                            <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{formatDate(log.start_time).split(' ')[1]}</div>
+                                            <div className="text-xs text-slate-400">{formatDate(log.start_time).split(' ')[0]}</div>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                                            {log.username}
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center text-[10px] font-bold text-blue-600">
+                                                    {log.username[0].toUpperCase()}
+                                                </div>
+                                                <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{log.username}</span>
+                                            </div>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                            <div className="text-gray-900 dark:text-gray-100">{log.project_name}</div>
-                                            <div className="text-gray-500 dark:text-gray-400 text-xs">→ {log.module_name}</div>
+                                        <td className="px-6 py-4">
+                                            <div className="flex flex-col">
+                                                <span className="text-sm font-bold text-slate-900 dark:text-white">{log.project_name}</span>
+                                                <div className="flex items-center gap-1.5 mt-0.5">
+                                                    <span className="text-slate-300 dark:text-slate-600 text-xs text-bold">→</span>
+                                                    <span className="text-xs font-medium text-slate-500 hover:text-blue-500 cursor-pointer">{log.module_name}</span>
+                                                    <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-400 rounded text-[9px] font-black uppercase">{log.module_type}</span>
+                                                </div>
+                                            </div>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-                                            {log.environment_name}
+                                        <td className="px-6 py-4">
+                                            <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{log.environment_name}</span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(log.status)}`}>
+                                        <td className="px-6 py-4">
+                                            <span className={`px-2 py-0.5 border rounded text-[10px] font-bold ${getLogTypeInfo(log.log_type).color}`}>
+                                                {getLogTypeInfo(log.log_type).text}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 text-center">
+                                            <span className={`px-3 py-1 inline-flex text-[11px] font-black rounded-full uppercase tracking-tighter ${getStatusColor(log.status)}`}>
                                                 {getStatusText(log.status)}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 font-mono">
-                                            {log.version || '-'}
+                                        <td className="px-6 py-4">
+                                            <span className="px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded text-[11px] font-mono text-slate-600 dark:text-slate-400">
+                                                {log.version || '--'}
+                                            </span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                        <td className="text-right">
                                             <button
                                                 onClick={() => setSelectedLog(log)}
-                                                className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                                                className="detail-btn"
                                             >
-                                                查看详情
+                                                详情报告
                                             </button>
                                         </td>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
 
-                    {pagination.hasMore && (
-                        <div className="mt-6 text-center">
-                            <button
-                                onClick={loadMore}
-                                disabled={loading}
-                                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {loading ? '加载中...' : '加载更多'}
-                            </button>
+                {/* Pagination Footer */}
+                <div className="px-6 py-4 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <div className="text-xs text-slate-400 font-bold">
+                        第 {Math.min(pagination.offset + 1, pagination.total)} - {Math.min(pagination.offset + logs.length, pagination.total)} 条，共 {pagination.total} 条
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => handlePageChange(currentPage - 1)}
+                            disabled={currentPage === 1 || loading}
+                            className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30 transition-colors"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7" /></svg>
+                        </button>
+
+                        <div className="flex gap-1">
+                            {[...Array(totalPages)].map((_, i) => {
+                                const page = i + 1;
+                                // Simplified pagination: show current, prev, next, first, last
+                                if (
+                                    page === 1 ||
+                                    page === totalPages ||
+                                    (page >= currentPage - 1 && page <= currentPage + 1)
+                                ) {
+                                    return (
+                                        <button
+                                            key={page}
+                                            onClick={() => handlePageChange(page)}
+                                            className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${currentPage === page
+                                                ? 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                                                : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400'
+                                                }`}
+                                        >
+                                            {page}
+                                        </button>
+                                    );
+                                }
+                                if (page === currentPage - 2 || page === currentPage + 2) {
+                                    return <span key={page} className="w-4 text-center leading-8 text-slate-300">...</span>;
+                                }
+                                return null;
+                            })}
                         </div>
-                    )}
-                </>
-            )}
+
+                        <button
+                            onClick={() => handlePageChange(currentPage + 1)}
+                            disabled={currentPage === totalPages || loading}
+                            className="p-2 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30 transition-colors"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
 
             {/* Details Modal */}
             {selectedLog && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setSelectedLog(null)}>
-                    <div className="bg-white dark:bg-gray-800 rounded-lg max-w-3xl w-full max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
-                        <div className="p-6 border-b dark:border-gray-700">
-                            <div className="flex justify-between items-start">
-                                <div>
-                                    <h2 className="text-xl font-bold mb-2">部署详情</h2>
-                                    <div className="text-sm text-gray-600 dark:text-gray-400">
-                                        <p>项目: {selectedLog.project_name} → {selectedLog.module_name}</p>
-                                        <p>环境: {selectedLog.environment_name}</p>
-                                        <p>用户: {selectedLog.username}</p>
-                                        <p>时间: {formatDate(selectedLog.start_time)}</p>
-                                        {selectedLog.version && <p>版本: {selectedLog.version}</p>}
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={() => setSelectedLog(null)}
-                                    className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                                >
-                                    ✕
-                                </button>
+                <div className="modal-backdrop" onClick={() => setSelectedLog(null)}>
+                    <div className="report-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <div>
+                                <h3 className="text-xl font-bold text-slate-900">部署详情报告</h3>
+                                <p className="text-sm text-slate-500 mt-1">{selectedLog.project_name} / {selectedLog.module_name}</p>
                             </div>
-                        </div>
-                        <div className="p-6 overflow-y-auto max-h-96">
-                            <h3 className="font-semibold mb-2">日志输出:</h3>
-                            {selectedLog.log_output ? (
-                                <pre className="bg-gray-100 dark:bg-gray-900 p-4 rounded-lg text-sm overflow-x-auto whitespace-pre-wrap">
-                                    {selectedLog.log_output}
-                                </pre>
-                            ) : (
-                                <p className="text-gray-500 dark:text-gray-400">无日志输出</p>
-                            )}
-                        </div>
-                        <div className="p-6 border-t dark:border-gray-700 flex justify-end">
                             <button
                                 onClick={() => setSelectedLog(null)}
-                                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
+                                className="close-x-btn"
                             >
-                                关闭
+                                ✕
                             </button>
+                        </div>
+                        <div className="modal-body">
+                            <div className="grid grid-cols-2 gap-8 mb-8">
+                                <div className="detail-item">
+                                    <label className="detail-label">执行状态</label>
+                                    <div className="mt-1">
+                                        <span className={`status-tag ${selectedLog.status === 'success' ? 'success' : selectedLog.status === 'failed' ? 'failed' : 'deploying'}`}>
+                                            {getStatusText(selectedLog.status)}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="detail-item">
+                                    <label className="detail-label">开始时间</label>
+                                    <div className="mt-1 text-slate-700 font-medium">{formatDate(selectedLog.start_time)}</div>
+                                </div>
+                                <div className="detail-item">
+                                    <label className="detail-label">服务器</label>
+                                    <div className="mt-1 font-bold text-slate-900">{selectedLog.environment_name}</div>
+                                </div>
+                                <div className="detail-item">
+                                    <label className="detail-label">操作类型</label>
+                                    <div className="mt-1">
+                                        <span className={`px-2 py-0.5 border rounded text-xs font-bold ${getLogTypeInfo(selectedLog.log_type).color}`}>
+                                            {getLogTypeInfo(selectedLog.log_type).text}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="detail-item">
+                                    <label className="detail-label">版本标识</label>
+                                    <div className="mt-1 font-mono text-sm text-slate-600">{selectedLog.version || '--'}</div>
+                                </div>
+                            </div>
+
+                            <div className="log-section">
+                                <label className="detail-label">完整执行日志</label>
+                                <div className="log-box">
+                                    {selectedLog.log_output || '暂无日志输出'}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="btn-close" onClick={() => setSelectedLog(null)}>确认关闭</button>
                         </div>
                     </div>
                 </div>
             )}
+
+            <style jsx>{`
+                .history-container {
+                    background: #f4f7f9;
+                    min-height: 100vh;
+                    padding: 32px;
+                }
+                .filter-bar {
+                    display: flex;
+                    align-items: center;
+                    gap: 16px;
+                    padding: 16px 24px;
+                    background: #f8fafc;
+                    border-bottom: 1px solid #ebeef5;
+                    overflow-x: auto;
+                    flex-wrap: nowrap;
+                }
+                .filter-item {
+                    flex-shrink: 0;
+                }
+                .filter-bar::-webkit-scrollbar {
+                    height: 4px;
+                }
+                .filter-bar::-webkit-scrollbar-thumb {
+                    background: #e2e8f0;
+                    border-radius: 4px;
+                }
+                .filter-label {
+                    display: block;
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: #606266;
+                    margin-bottom: 8px;
+                }
+                .compact-select {
+                    width: 160px;
+                    height: 32px;
+                    padding: 0 12px;
+                    background: #fff;
+                    border: 1px solid #dcdfe6;
+                    border-radius: 4px;
+                    font-size: 13px;
+                    color: #606266;
+                    outline: none;
+                    transition: border-color 0.2s cubic-bezier(0.645, 0.045, 0.355, 1);
+                    appearance: none;
+                    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23c0c4cc'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+                    background-repeat: no-repeat;
+                    background-position: right 8px center;
+                    background-size: 12px;
+                }
+                .compact-select:focus {
+                    border-color: #409eff;
+                }
+                .compact-select:hover {
+                    border-color: #c0c4cc;
+                }
+                .compact-select:disabled {
+                    background-color: #f5f7fa;
+                    border-color: #e4e7ed;
+                    color: #c0c4cc;
+                    cursor: not-allowed;
+                }
+                .history-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                }
+                .history-table th {
+                    padding: 12px 16px;
+                    background: #f5f7fa;
+                    border-bottom: 1px solid #ebeef5;
+                    text-align: left;
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: #909399;
+                }
+                .history-table td {
+                    padding: 12px 16px;
+                    border-bottom: 1px solid #ebeef5;
+                    font-size: 14px;
+                    color: #606266;
+                }
+                .detail-btn {
+                    padding: 4px 12px;
+                    background: transparent;
+                    color: #409eff;
+                    font-size: 13px;
+                    font-weight: 500;
+                    border-radius: 4px;
+                    border: 1px solid transparent;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .detail-btn:hover {
+                    color: #66b1ff;
+                    background: #ecf5ff;
+                    border-color: #d9ecff;
+                }
+                .status-tag {
+                    padding: 2px 8px;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    font-weight: 500;
+                    display: inline-flex;
+                    border-width: 1px;
+                    border-style: solid;
+                }
+                .status-tag.success { background: #f0f9eb; color: #67c23a; border-color: #e1f3d8; }
+                .status-tag.failed { background: #fef0f0; color: #f56c6c; border-color: #fde2e2; }
+                .status-tag.deploying { background: #fdf6ec; color: #e6a23c; border-color: #faecd8; }
+
+                .modal-backdrop {
+                    position: fixed;
+                    top: 0;
+                    left: 240px; /* Sidebar offset */
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0, 0, 0, 0.5);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10000;
+                    backdrop-filter: blur(4px);
+                }
+                .report-modal {
+                    background: #fff;
+                    border-radius: 8px;
+                    width: 100%;
+                    max-width: 800px;
+                    max-height: 90vh;
+                    display: flex;
+                    flex-direction: column;
+                    box-shadow: 0 2px 12px 0 rgba(0,0,0,.1);
+                    overflow: hidden;
+                    animation: modalIn 0.3s ease-out;
+                }
+                @keyframes modalIn {
+                    from { transform: translateY(-20px); opacity: 0; }
+                    to { transform: translateY(0); opacity: 1; }
+                }
+
+                .modal-header {
+                    padding: 20px 24px;
+                    border-bottom: 1px solid #ebeef5;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+                .close-x-btn {
+                    background: none; border: none; font-size: 16px; color: #909399;
+                    cursor: pointer; padding: 4px; border-radius: 4px; transition: all 0.2s;
+                }
+                .close-x-btn:hover { color: #409eff; }
+
+                .modal-body { padding: 24px; overflow-y: auto; flex: 1; }
+                .detail-label { font-size: 13px; font-weight: 700; color: #606266; margin-bottom: 8px; display: block; }
+                
+                .log-box {
+                    background: #f5f7fa;
+                    color: #303133;
+                    padding: 16px;
+                    border-radius: 4px;
+                    font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+                    font-size: 12px;
+                    line-height: 1.5;
+                    white-space: pre-wrap;
+                    margin-top: 8px;
+                    border: 1px solid #e4e7ed;
+                }
+                .modal-footer {
+                    padding: 16px 24px;
+                    border-top: 1px solid #ebeef5;
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 12px;
+                }
+                .btn-close {
+                    background: #409eff; color: #fff; border: 1px solid #409eff; padding: 8px 16px;
+                    border-radius: 4px; font-weight: 500; font-size: 14px; cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .btn-close:hover { background: #66b1ff; border-color: #66b1ff; }
+                .no-scrollbar::-webkit-scrollbar { display: none; }
+                .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+            `}</style>
         </div>
     );
 }

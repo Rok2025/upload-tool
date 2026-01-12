@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS modules (
     log_path VARCHAR(255), -- Path to log file on target server
     start_command TEXT, -- Command to start the service
     stop_command TEXT, -- Command to stop the service
+    restart_command TEXT, -- Command to restart the service
     backup_path VARCHAR(255), -- Path for backups on target server
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );

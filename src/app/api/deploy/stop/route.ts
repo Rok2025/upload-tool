@@ -53,16 +53,14 @@ export async function POST(req: NextRequest) {
         );
         const config = configRow.length > 0 ? configRow[0] : null;
 
-        const effectiveRestartCommand = config?.restart_command || module.restart_command;
-        const effectiveStartCommand = config?.start_command || module.start_command;
-        const restartCmd = effectiveRestartCommand || effectiveStartCommand;
+        const stopCmd = config?.stop_command || module.stop_command;
 
         const rawRemotePath = config?.remote_path || module.remote_path;
         const basePath = module.project_base_path || '';
         const effectiveRemotePath = path.join(basePath, rawRemotePath || '');
 
-        if (!restartCmd) {
-            return NextResponse.json({ error: '未配置重启命令或启动命令。' }, { status: 400 });
+        if (!stopCmd) {
+            return NextResponse.json({ error: '未配置停止命令。' }, { status: 400 });
         }
 
         // 4. SSH & Execute
@@ -80,31 +78,31 @@ export async function POST(req: NextRequest) {
             password: password
         });
 
-        const fullRestartCmd = effectiveRemotePath ? `cd "${effectiveRemotePath}" && ${restartCmd}` : restartCmd;
-        console.log(`[Restart] Executing: ${fullRestartCmd}`);
-        const result = await ssh.exec(fullRestartCmd);
+        const fullStopCmd = effectiveRemotePath ? `cd "${effectiveRemotePath}" && ${stopCmd}` : stopCmd;
+        console.log(`[Stop Service] Executing: ${fullStopCmd}`);
+        const result = await ssh.exec(fullStopCmd);
 
         // Log the action (Success Path)
         await pool.query(
             'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_type, log_output, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [user.id, moduleId, effectiveEnvironmentId, 'success', 'restart', `Manual Restart Executed: ${fullRestartCmd}`, start_time, new Date()]
+            [user.id, moduleId, effectiveEnvironmentId, 'success', 'stop', `Manual Stop Executed: ${fullStopCmd}`, start_time, new Date()]
         );
 
-        return NextResponse.json({ message: '重启命令已发送', output: result.stdout });
+        return NextResponse.json({ message: '停止命令已发送', output: result.stdout });
 
     } catch (error: any) {
-        console.error('[Restart API Error]:', error);
+        console.error('[Stop API Error]:', error);
         if (currentModuleId && currentEnvId) {
             try {
                 const user = await requireDeployPermission(req, null as any);
                 if (user) {
                     await pool.query(
                         'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_type, log_output, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                        [user.id, currentModuleId, currentEnvId, 'failed', 'restart', error.message, start_time, new Date()]
+                        [user.id, currentModuleId, currentEnvId, 'failed', 'stop', error.message, start_time, new Date()]
                     );
                 }
             } catch (innerError) {
-                console.error('[Restart API] Failed to log failure:', innerError);
+                console.error('[Stop API] Failed to log failure:', innerError);
             }
         }
         return NextResponse.json({ error: error.message }, { status: 500 });

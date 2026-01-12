@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
     let currentUserId: number | null = null;
     let currentModuleId: any = null;
     let currentEnvId: any = null;
+    const deployStartTime = new Date();
 
     try {
         const body = await req.json();
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
 
         if (!effectiveEnvironmentId) {
             console.error(`[Deploy] No environment configured for project: ${module.project_id}`);
-            return NextResponse.json({ error: '该项目尚未配置部署环境，请先在【项目配置】中绑定服务器。' }, { status: 400 });
+            return NextResponse.json({ error: '该项目尚未配置服务器，请先在【项目配置】中绑定服务器。' }, { status: 400 });
         }
 
         // 3. Fetch Environment-specific Configuration
@@ -66,6 +67,15 @@ export async function POST(req: NextRequest) {
         const effectiveStartCommand = config?.start_command || module.start_command;
         const effectiveStopCommand = config?.stop_command || module.stop_command;
         const effectiveRestartCommand = config?.restart_command || module.restart_command;
+
+        // DEBUG: Log restart command configuration
+        console.log(`[Deploy] ========== RESTART COMMAND DEBUG ==========`);
+        console.log(`[Deploy] module.restart_command: ${module.restart_command}`);
+        console.log(`[Deploy] config?.restart_command: ${config?.restart_command}`);
+        console.log(`[Deploy] effectiveRestartCommand: ${effectiveRestartCommand}`);
+        console.log(`[Deploy] effectiveStartCommand: ${effectiveStartCommand}`);
+        console.log(`[Deploy] skipRestart parameter: ${skipRestart}`);
+        console.log(`[Deploy] =============================================`);
 
         // Path concatenation
         const basePath = module.project_base_path || '';
@@ -86,7 +96,7 @@ export async function POST(req: NextRequest) {
 
         const [envRow]: any = await pool.query('SELECT * FROM environments WHERE id = ?', [effectiveEnvironmentId]);
         if (!envRow.length) {
-            return NextResponse.json({ error: '找不到部署环境配置。' }, { status: 404 });
+            return NextResponse.json({ error: '找不到服务器配置。' }, { status: 404 });
         }
         const env = envRow[0];
         console.log(`[Deploy] Connecting to server: ${env.host}:${env.port} as ${env.username}`);
@@ -181,8 +191,17 @@ export async function POST(req: NextRequest) {
 
             const restartCmd = effectiveRestartCommand || effectiveStartCommand;
             if (restartCmd && !skipRestart) {
-                console.log(`[Deploy] Running restart/start command: ${restartCmd}`);
-                await ssh.exec(restartCmd);
+                console.log(`[Deploy] Running restart/start command in ${parentDir}: ${restartCmd}`);
+                const fullRestartCmd = `cd "${parentDir}" && ${restartCmd}`;
+                const restartResult = await ssh.exec(fullRestartCmd);
+                console.log(`[Deploy] Restart command output:`, restartResult.stdout);
+                if (restartResult.stderr) {
+                    console.warn(`[Deploy] Restart command stderr:`, restartResult.stderr);
+                }
+            } else if (!restartCmd) {
+                console.warn(`[Deploy] No restart command configured for this module.`);
+            } else if (skipRestart) {
+                console.log(`[Deploy] Skip Restart requested by user.`);
             }
         } else if (osType === 'linux') {
             console.log(`[Deploy] Using Linux Seamless Swap Strategy...`);
@@ -192,8 +211,15 @@ export async function POST(req: NextRequest) {
 
             const restartCmd = effectiveRestartCommand || effectiveStartCommand;
             if (restartCmd && !skipRestart) {
-                console.log(`[Deploy] Running Linux restart/start command: ${restartCmd}`);
-                await ssh.exec(restartCmd);
+                console.log(`[Deploy] Running Linux restart/start command in ${effectiveRemotePath}: ${restartCmd}`);
+                const fullRestartCmd = `cd "${effectiveRemotePath}" && ${restartCmd}`;
+                const restartResult = await ssh.exec(fullRestartCmd);
+                console.log(`[Deploy] Restart command output:`, restartResult.stdout);
+                if (restartResult.stderr) {
+                    console.warn(`[Deploy] Restart command stderr:`, restartResult.stderr);
+                }
+            } else if (!restartCmd) {
+                console.warn(`[Deploy] No restart command configured for this module.`);
             } else if (skipRestart) {
                 console.log(`[Deploy] Skip Restart requested by user.`);
             }
@@ -222,8 +248,15 @@ export async function POST(req: NextRequest) {
 
             const restartCmd = effectiveRestartCommand || effectiveStartCommand;
             if (restartCmd && !skipRestart) {
-                console.log(`[Deploy] Starting Windows service: ${restartCmd}`);
-                await ssh.exec(restartCmd);
+                console.log(`[Deploy] Starting Windows service in ${effectiveRemotePath}: ${restartCmd}`);
+                const fullRestartCmd = `cd /d "${effectiveRemotePath}" && ${restartCmd}`;
+                const restartResult = await ssh.exec(fullRestartCmd);
+                console.log(`[Deploy] Restart command output:`, restartResult.stdout);
+                if (restartResult.stderr) {
+                    console.warn(`[Deploy] Restart command stderr:`, restartResult.stderr);
+                }
+            } else if (!restartCmd) {
+                console.warn(`[Deploy] No restart command configured for this module.`);
             } else if (skipRestart) {
                 console.log(`[Deploy] Skip Restart requested by user.`);
             }
@@ -236,9 +269,10 @@ export async function POST(req: NextRequest) {
         // 4. Log Success
         if (currentUserId && currentModuleId && currentEnvId) {
             console.log(`[Deploy] Recording success log to DB...`);
+            const deployEndTime = new Date();
             await pool.query(
-                'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, version) VALUES (?, ?, ?, ?, ?)',
-                [currentUserId, currentModuleId, currentEnvId, 'success', suffix]
+                'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_type, version, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [currentUserId, currentModuleId, currentEnvId, 'success', 'deploy', suffix, deployStartTime, deployEndTime]
             );
         }
 
@@ -263,9 +297,10 @@ export async function POST(req: NextRequest) {
 
         if (currentUserId && currentModuleId && currentEnvId) {
             try {
+                const deployEndTime = new Date();
                 await pool.query(
-                    'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_output) VALUES (?, ?, ?, ?, ?)',
-                    [currentUserId, currentModuleId, currentEnvId, 'failed', errorMsg]
+                    'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_type, log_output, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    [currentUserId, currentModuleId, currentEnvId, 'failed', 'deploy', errorMsg, deployStartTime, deployEndTime]
                 );
             } catch (logError) {
                 console.error('[Deploy] FATAL: Failed to log error to DB:', logError);

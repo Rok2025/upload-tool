@@ -217,7 +217,7 @@ export default function ConfigPage() {
     };
 
     const handleDeleteEnvConfig = async (id: number) => {
-        if (!confirm('确定要删除此环境配置吗？')) return;
+        if (!confirm('确定要删除此服务器配置吗？')) return;
         const res = await fetch(`/api/module-configs?id=${id}`, { method: 'DELETE' });
         if (res.ok && editingModule) openEnvConfig(editingModule);
         fetchData();
@@ -280,7 +280,7 @@ export default function ConfigPage() {
                     <div className="section-card">
                         <div className="header-actions">
                             <h2>服务器配置</h2>
-                            <button type="button" className="btn-primary" onClick={handleAddEnv}>+ 新增环境</button>
+                            <button type="button" className="btn-primary" onClick={handleAddEnv}>+ 新增服务器</button>
                         </div>
                         <div className="env-grid">
                             {environments.map(env => {
@@ -322,7 +322,7 @@ export default function ConfigPage() {
                                     </div>
                                 );
                             })}
-                            {environments.length === 0 && <p className="empty-text">暂无环境配置</p>}
+                            {environments.length === 0 && <p className="empty-text">暂无服务器配置</p>}
                         </div>
                     </div>
                 )}
@@ -385,15 +385,15 @@ export default function ConfigPage() {
                 <div className="modal-overlay" onClick={() => setShowEnvConfigModal(false)}>
                     <div className="modal-content wide" onClick={e => e.stopPropagation()}>
                         <div className="header-actions">
-                            <h3>模块环境特定配置: {editingModule?.name}</h3>
-                            <button type="button" className="btn-dashed small" onClick={handleAddEnvConfig}>+ 新增环境配置</button>
+                            <h3>模块服务器特定配置: {editingModule?.name}</h3>
+                            <button type="button" className="btn-dashed small" onClick={handleAddEnvConfig}>+ 新增服务器配置</button>
                         </div>
 
                         <div className="config-list">
                             <table className="mini-table">
                                 <thead>
                                     <tr>
-                                        <th>环境</th>
+                                        <th>服务器</th>
                                         <th>远端路径</th>
                                         <th>重启命令</th>
                                         <th>操作</th>
@@ -412,7 +412,7 @@ export default function ConfigPage() {
                                         </tr>
                                     ))}
                                     {moduleEnvConfigs.length === 0 && (
-                                        <tr><td colSpan={5} className="empty-text" style={{ textAlign: 'center', padding: '20px' }}>未配置特定环境，将使用模块默认配置</td></tr>
+                                        <tr><td colSpan={5} className="empty-text" style={{ textAlign: 'center', padding: '20px' }}>未配置特定服务器，将使用模块默认配置</td></tr>
                                     )}
                                 </tbody>
                             </table>
@@ -428,10 +428,10 @@ export default function ConfigPage() {
             {showEnvConfigFormModal && (
                 <div className="modal-overlay" onClick={() => setShowEnvConfigFormModal(false)}>
                     <div className="modal-content" onClick={e => e.stopPropagation()}>
-                        <h3>{editingEnvConfig ? '编辑环境配置' : '新增环境配置'}</h3>
+                        <h3>{editingEnvConfig ? '编辑服务器配置' : '新增服务器配置'}</h3>
                         <form onSubmit={handleSaveEnvConfig}>
                             <div className="form-group">
-                                <label>选择环境</label>
+                                <label>选择服务器</label>
                                 <select
                                     required
                                     disabled={!!editingEnvConfig}
@@ -520,17 +520,17 @@ export default function ConfigPage() {
                                 <textarea value={projectForm.description} onChange={e => setProjectForm({ ...projectForm, description: e.target.value })} placeholder="项目的简要描述..." rows={3} />
                             </div>
                             <div className="form-group">
-                                <label>部署环境 (服务器)</label>
+                                <label>服务器</label>
                                 <select
                                     value={projectForm.environment_id}
                                     onChange={e => setProjectForm({ ...projectForm, environment_id: parseInt(e.target.value) })}
                                 >
-                                    <option value="0">-- 请选择部署环境 --</option>
+                                    <option value="0">-- 请选择服务器 --</option>
                                     {environments.map(env => (
                                         <option key={env.id} value={env.id}>{env.name} ({env.host})</option>
                                     ))}
                                 </select>
-                                <p className="hint">绑定后，该项目下所有模块将默认发布到此环境。</p>
+                                <p className="hint">绑定后，该项目下所有模块将默认发布到此服务器。</p>
                             </div>
                             <div className="modal-actions">
                                 <button type="button" className="btn-secondary" onClick={() => setShowProjectModal(false)}>取消</button>
@@ -545,11 +545,11 @@ export default function ConfigPage() {
             {showEnvModal && (
                 <div className="modal-overlay" onClick={() => setShowEnvModal(false)}>
                     <div className="modal-content" onClick={e => e.stopPropagation()}>
-                        <h3>{editingEnv ? '编辑环境' : '新增环境'}</h3>
+                        <h3>{editingEnv ? '编辑服务器' : '新增服务器'}</h3>
                         <form onSubmit={handleSaveEnv}>
                             <div className="form-group">
-                                <label>环境名称</label>
-                                <input required value={envForm.name} onChange={e => setEnvForm({ ...envForm, name: e.target.value })} placeholder="例如：生产环境" />
+                                <label>服务器名称</label>
+                                <input required value={envForm.name} onChange={e => setEnvForm({ ...envForm, name: e.target.value })} placeholder="例如：生产服务器" />
                             </div>
                             <div className="grid-2">
                                 <div className="form-group">

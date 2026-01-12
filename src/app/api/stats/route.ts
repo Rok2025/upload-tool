@@ -20,23 +20,28 @@ export async function GET() {
         let recentDeployments: any[] = [];
 
         try {
-            const today = new Date().toISOString().split('T')[0];
+            // Get today's range in local time (relative to server)
+            const now = new Date();
+            const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
             const [todayRows]: any = await pool.query(
-                'SELECT COUNT(*) as count FROM deploy_logs WHERE DATE(created_at) = ?',
-                [today]
+                'SELECT COUNT(*) as count FROM deploy_logs WHERE start_time >= ?',
+                [startOfToday]
             );
             todayDeployCount = todayRows[0].count;
 
             const [recentRows]: any = await pool.query(
-                `SELECT dl.*, p.name as project_name, m.name as module_name 
+                `SELECT dl.*, p.name as project_name, m.name as module_name, e.name as environment_name
                  FROM deploy_logs dl
-                 LEFT JOIN projects p ON dl.project_id = p.id
                  LEFT JOIN modules m ON dl.module_id = m.id
-                 ORDER BY dl.created_at DESC LIMIT 10`
+                 LEFT JOIN projects p ON m.project_id = p.id
+                 LEFT JOIN environments e ON dl.environment_id = e.id
+                 ORDER BY dl.start_time DESC LIMIT 5`
             );
             recentDeployments = recentRows;
-        } catch {
-            // deploy_logs table might not exist yet
+        } catch (err) {
+            console.error('[Stats API Error]: Failed to fetch deploy logs:', err);
+            // deploy_logs table might not exist yet or has schema mismatch
         }
 
         return NextResponse.json({
