@@ -179,28 +179,52 @@ pm2 logs upload-tool
 
 ---
 
-## ❓ 常见问题
+## ❓ 常见问题 (Troubleshooting)
 
-**Q: 必须先安装 MySQL 吗？**  
-A: 不一定。如果使用远程 MySQL，只需在 `.env.local` 中配置远程地址即可。
+### 🔴 无法访问 (Connection Refused / Time out)
+**现象**：浏览器转圈或提示无法连接，但服务器上 `curl http://localhost:4000` 是通的。
+**原因**：**云服务器安全组 (Security Group)** 或 **Linux 防火墙** 只有本地权限。
+**解决**：
+1.  **首要检查（云控制台）**：登录阿里云/华为云/腾讯云后台 -> ECS实例 -> **安全组 (Security Group)** -> 添加 **入方向 (Inbound)** 规则：开启 TCP **4000** 端口，授权对象 `0.0.0.0/0`。
+2.  **次要检查（Linux防火墙）**：
+    ```bash
+    # Rocky Linux / CentOS
+    sudo firewall-cmd --zone=public --add-port=4000/tcp --permanent
+    sudo firewall-cmd --reload
+    
+    # Ubuntu
+    sudo ufw allow 4000/tcp
+    ```
 
-**Q: 端口 4000 被占用怎么办？**  
-A: 修改 `package.json` 中的 `"start": "next start -p 4000"` 改为其他端口。
+### 🔴 PM2 安装失败 (npm error 404)
+**现象**：`npm install -g pm2` 报错 E404 `binaries/npm/pm2`。
+**原因**：npm 镜像源配置错误。
+**解决**：
+```bash
+npm config set registry https://registry.npmjs.org/
+npm install -g pm2
+```
 
-**Q: 如何配置 HTTPS？**  
-A: 参考 [DEPLOY_LINUX.md](./DEPLOY_LINUX.md) 中的 Nginx + Let's Encrypt 配置。
+### 🔴 PM2 启动报错 (errored / ENOENT)
+**现象**：`pm2 status` 显示 `errored`，日志报错 `ENOENT: no such file or directory, open '/root/package.json'`。
+**原因**：在 `/root` 目录下执行了启动命令，PM2 找不到项目文件。
+**解决**：必须先进入项目目录！
+```bash
+pm2 delete upload-tool       # 删除错误配置
+cd /opt/upload-tool          # ✅ 进入项目目录
+pm2 start npm --name "upload-tool" -- start  # 重新启动
+```
 
-**Q: 忘记数据库密码怎么办？**  
-A: 查看 `.env.local` 文件：`cat .env.local | grep MYSQL_PASSWORD`
+### 🔴 端口 4000 被占用
+**解决**：修改 `package.json` 中的 `"start": "next start -p 4000"` 改为其他端口。
 
 ---
 
 ## 📚 更多资源
 
-- **详细部署指南**: [DEPLOY_LINUX.md](./DEPLOY_LINUX.md)
-- **自动化部署脚本**: `./deploy-linux.sh`
-- **Nginx 配置模板**: `nginx-config-template.conf`
-- **数据库备份脚本**: `scripts/backup-db.sh`
+- **详细部署指南**: [DEPLOY_LINUX.md](../DEPLOY_LINUX.md)
+- **自动化部署脚本**: `../deploy-linux.sh`
+- **Nginx 配置模板**: `../nginx-config-template.conf`
 
 ---
 
