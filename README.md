@@ -32,3 +32,198 @@
 
 ### 部署流程
 `上传 (1.50) -> 归档 (1.50 7天) -> 分发 (B节点) -> 安全更名备份 (B节点 3天) -> 包替换与重启 -> 健康检查`
+
+---
+
+## 安装与部署
+
+> [!NOTE]
+> **Windows Server 用户请看这里！** 
+> - 📘 **分步操作手册**：[从本地打包到服务器部署的完整流程](./DEPLOY_STEP_BY_STEP.md) ⭐ 推荐
+> - 📖 **详细部署指南**：[Windows Server 环境配置和高级设置](./DEPLOY_WINDOWS.md)
+
+### 环境要求
+
+#### 必备软件
+- **Node.js**: >= 20.0.0
+- **npm**: >= 10.0.0
+- **MySQL**: >= 8.0
+- **操作系统**: Windows Server (1.50 中转服务器) 或 Linux (开发/测试环境)
+
+#### 目标服务器需求
+- 支持 SSH 连接
+- 具备 SCP 文件传输能力
+- 目标 Linux 服务器需要 Java 运行环境 (如果部署 Java 应用)
+
+### 安装步骤
+
+#### 1. 克隆项目
+```bash
+git clone <repository-url>
+cd upload-tool
+```
+
+#### 2. 安装依赖
+```bash
+npm install
+```
+
+#### 3. 数据库初始化
+
+**创建数据库**
+```sql
+CREATE DATABASE `upload-tool` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+**导入数据库结构**
+```bash
+mysql -u root -p upload-tool < db/schema.sql
+```
+
+#### 4. 配置环境变量
+
+**复制环境变量模板**
+```bash
+cp env.example .env.local
+```
+
+**编辑 `.env.local` 文件**
+```env
+# MySQL 数据库配置
+MYSQL_HOST=localhost          # 数据库主机地址
+MYSQL_PORT=5836              # 数据库端口
+MYSQL_USER=root              # 数据库用户名
+MYSQL_PASSWORD=your_password # 数据库密码
+MYSQL_DATABASE=upload-tool   # 数据库名称
+
+# AES 加密密钥（用于加密存储 SSH 凭证）
+ENCRYPTION_KEY=your_secret_32_char_encryption_key_here
+
+# JWT 认证密钥
+JWT_SECRET=your_jwt_secret_key_here
+
+# 文件存储路径
+UPLOAD_DIR=./uploads/tmp      # 临时上传目录
+STORAGE_DIR=./uploads/archive # 归档存储目录
+```
+
+> [!IMPORTANT]
+> - `ENCRYPTION_KEY` 必须是 32 字符的字符串（用于 AES-256 加密）
+> - `JWT_SECRET` 建议使用至少 64 字符的随机字符串
+> - 生产环境请务必修改默认密钥
+
+#### 5. 验证数据库连接
+```bash
+node check_db.js
+```
+
+如果配置正确，将输出数据库连接成功的信息。
+
+### 启动应用
+
+#### 开发模式（推荐用于本地开发）
+```bash
+npm run dev
+```
+应用将在 `http://localhost:4000` 启动
+
+#### 生产模式
+
+**构建项目**
+```bash
+npm run build
+```
+
+**启动生产服务器 - Linux**
+```bash
+npm start
+```
+
+**启动生产服务器 - Windows (PowerShell)**
+```powershell
+.\scripts\restart.ps1
+```
+
+**启动生产服务器 - Linux (使用脚本)**
+```bash
+chmod +x scripts/restart.sh
+./scripts/restart.sh
+```
+
+> [!TIP]
+> 生产环境建议使用 PM2 进行进程管理：
+> ```bash
+> npm install -g pm2
+> pm2 start npm --name "upload-tool" -- start
+> pm2 save
+> pm2 startup
+> ```
+
+### 首次使用
+
+1. **访问应用**: 浏览器打开 `http://localhost:4000`
+2. **初始登录**: 使用默认管理员账号登录（请查看数据库初始化脚本中的默认账号）
+3. **配置项目**: 进入"配置管理"页面，添加：
+   - 部署环境（目标服务器信息 + SSH 凭证）
+   - 项目配置
+   - 模块配置（含部署命令和重启命令）
+4. **上传测试**: 上传发布包测试部署流程
+
+### 目录结构说明
+
+```
+upload-tool/
+├── db/                    # 数据库脚本
+│   └── schema.sql        # 数据库结构
+├── public/               # 静态资源
+├── scripts/              # 启动脚本
+│   ├── restart.sh       # Linux 重启脚本
+│   └── restart.ps1      # Windows 重启脚本
+├── src/
+│   ├── app/             # Next.js 页面和 API 路由
+│   ├── components/      # React 组件
+│   ├── lib/             # 工具库（数据库、SSH、加密等）
+│   └── middleware/      # 中间件（认证等）
+├── uploads/             # 上传文件存储（自动创建）
+│   ├── tmp/            # 临时文件
+│   └── archive/        # 归档文件
+├── .env.local          # 环境变量配置（不提交到Git）
+├── env.example         # 环境变量模板
+└── package.json        # 项目依赖
+
+```
+
+### 常见问题
+
+**Q: 数据库连接失败？**  
+A: 检查 `.env.local` 中的数据库配置，确保 MySQL 服务已启动且端口正确。
+
+**Q: 上传失败或部署失败？**  
+A: 
+- 检查目标服务器 SSH 凭证是否正确
+- 确认目标服务器网络可达
+- 查看部署历史页面的错误日志
+
+**Q: 如何修改端口？**  
+A: 修改 `package.json` 中的 `scripts.dev` 和 `scripts.start`，将 `-p 4000` 改为其他端口。
+
+**Q: 如何备份数据？**  
+A: 
+```bash
+mysqldump -u root -p upload-tool > backup_$(date +%Y%m%d).sql
+```
+
+### 安全建议
+
+> [!CAUTION]
+> 生产环境部署时，请务必：
+> - 修改所有默认密码和密钥
+> - 启用 HTTPS（配置反向代理如 Nginx）
+> - 限制数据库仅允许本地访问
+> - 定期更新依赖包（`npm audit fix`）
+> - 配置防火墙规则，仅开放必要端口
+> - 定期备份数据库和上传文件
+
+### 技术支持
+
+如有问题，请查看[项目编码指南.md](./项目编码指南.md)或联系开发团队。
