@@ -14,7 +14,7 @@ export async function createSession(user: UserSession) {
     const cookieStore = await cookies();
     cookieStore.set('session', token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // Changed to false to allow login over HTTP (IP address)
         sameSite: 'lax',
         maxAge: 60 * 60 * 8, // 8 hours
         path: '/',
