@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
         const [result]: any = await pool.query(
             `INSERT INTO modules (project_id, name, type, remote_path, log_path, start_command, stop_command, restart_command, backup_path) 
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [project_id, name, type, remote_path, log_path, start_command, stop_command, restart_command, backup_path]
+            [project_id, name, type, remote_path, typeof log_path === 'object' ? JSON.stringify(log_path) : log_path, start_command, stop_command, restart_command, backup_path]
         );
 
         return NextResponse.json({ id: result.insertId, name });
@@ -39,7 +39,7 @@ export async function PUT(req: NextRequest) {
 
         await pool.query(
             `UPDATE modules SET name = ?, type = ?, remote_path = ?, log_path = ?, start_command = ?, stop_command = ?, restart_command = ?, backup_path = ? WHERE id = ?`,
-            [name, type, remote_path, log_path, start_command, stop_command, restart_command, backup_path, id]
+            [name, type, remote_path, typeof log_path === 'object' ? JSON.stringify(log_path) : log_path, start_command, stop_command, restart_command, backup_path, id]
         );
 
         console.log('[Modules PUT] Update successful for module ID:', id);

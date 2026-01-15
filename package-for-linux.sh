@@ -54,10 +54,9 @@ package_full() {
         --exclude='.DS_Store' \
         --exclude='node_modules/.cache' \
         --exclude='*.zip' \
-        .next node_modules db public scripts src \
+        .next node_modules db public src \
         package.json package-lock.json \
-        next.config.ts tsconfig.json env.example \
-        check_db.js README.md DEPLOY_LINUX.md
+        next.config.ts tsconfig.json env.example
     
     print_info "完整打包完成: $OUTPUT_FILE"
     print_info "文件大小: $(du -h $OUTPUT_FILE | cut -f1)"
@@ -76,10 +75,9 @@ package_light() {
         --exclude='*.log' \
         --exclude='.DS_Store' \
         --exclude='*.zip' \
-        .next db public scripts src \
+        .next db public src \
         package.json package-lock.json \
-        next.config.ts tsconfig.json env.example \
-        check_db.js README.md DEPLOY_LINUX.md
+        next.config.ts tsconfig.json env.example
     
     print_info "轻量打包完成: $OUTPUT_FILE"
     print_info "文件大小: $(du -h $OUTPUT_FILE | cut -f1)"

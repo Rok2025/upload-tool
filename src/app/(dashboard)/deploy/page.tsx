@@ -26,6 +26,7 @@ export default function DeployPage() {
     const [logModuleId, setLogModuleId] = useState<number | null>(null);
     const [logModuleName, setLogModuleName] = useState<string>('');
     const [logEnvironmentId, setLogEnvironmentId] = useState<number | null>(null);
+    const [logPaths, setLogPaths] = useState<string[]>([]);
 
     // Drag and Drop state
     const [isDragging, setIsDragging] = useState<Record<number, boolean>>({});
@@ -445,17 +446,42 @@ export default function DeployPage() {
                                             >
                                                 {state.isUploading ? `发布中 ${state.progress}%` : (state.deployed ? '重新发布' : '立即发布')}
                                             </button>
-                                            <button
-                                                className="action-btn log-btn"
-                                                onClick={() => {
-                                                    setLogModuleId(m.id);
-                                                    setLogModuleName(m.name);
-                                                    setLogEnvironmentId(selectedProject.environment_id || null);
-                                                    setShowLogModal(true);
-                                                }}
-                                            >
-                                                📋 查看日志
-                                            </button>
+
+                                            {(() => {
+                                                let hasLogs = false;
+                                                if (m.log_path) {
+                                                    try {
+                                                        const p = JSON.parse(m.log_path);
+                                                        if (Array.isArray(p) ? p.length > 0 : !!p) hasLogs = true;
+                                                    } catch { hasLogs = !!m.log_path; }
+                                                }
+                                                return hasLogs && (
+                                                    <button
+                                                        className="action-btn log-btn"
+                                                        onClick={() => {
+                                                            setLogModuleId(m.id);
+                                                            setLogModuleName(m.name);
+                                                            setLogEnvironmentId(selectedProject.environment_id || null);
+
+                                                            let paths: string[] = [];
+                                                            if (m.log_path) {
+                                                                try {
+                                                                    const parsed = JSON.parse(m.log_path);
+                                                                    if (Array.isArray(parsed)) paths = parsed;
+                                                                    else paths = [m.log_path];
+                                                                } catch (e) {
+                                                                    paths = [m.log_path];
+                                                                }
+                                                            }
+                                                            setLogPaths(paths);
+
+                                                            setShowLogModal(true);
+                                                        }}
+                                                    >
+                                                        📋 查看日志
+                                                    </button>
+                                                );
+                                            })()}
                                         </div>
                                         <div className="bottom-actions">
                                             <div className="control-group">
@@ -485,6 +511,7 @@ export default function DeployPage() {
                                         </div>
                                     </div>
                                 </div>
+
                             );
                         })}
                     </div>
@@ -495,17 +522,20 @@ export default function DeployPage() {
                         <p>选择项目后，可查看所属模块并执行发布任务</p>
                     </div>
                 )}
-            </main>
+            </main >
 
             {/* Log Modal */}
-            {showLogModal && logModuleId && (
-                <LogModal
-                    moduleId={logModuleId}
-                    moduleName={logModuleName}
-                    environmentId={logEnvironmentId}
-                    onClose={() => setShowLogModal(false)}
-                />
-            )}
+            {
+                showLogModal && logModuleId && (
+                    <LogModal
+                        moduleId={logModuleId}
+                        moduleName={logModuleName}
+                        environmentId={logEnvironmentId}
+                        initialLogPaths={logPaths}
+                        onClose={() => setShowLogModal(false)}
+                    />
+                )
+            }
 
             <style jsx>{`
                 .deploy-layout {
@@ -832,6 +862,6 @@ export default function DeployPage() {
                     100% { transform: scale(1); opacity: 1; }
                 }
             `}</style>
-        </div>
+        </div >
     );
 }

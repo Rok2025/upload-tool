@@ -6,48 +6,82 @@
 
 ## 🎯 三步部署法
 
-### 步骤 1️⃣：本地打包 (在你的 Mac 上）
+## 1. 本地打包 (Mac/Windows)
+
+为了避免缓存导致的各种跨平台兼容性问题（如 `ssh2-xxxx` 模块找不到），建议每次发布前执行完整的清理和构建。
+
+### 1.1 清理与构建
+在项目根目录下执行：
 
 ```bash
-cd /Users/freeman/Documents/00-Project/upload-tool
+# 1. 彻底清理构建缓存（关键步骤！）
+rm -rf .next node_modules/.cache .swc
 
-# 构建生产版本
+# 2. 重新编译项目
 npm run build
+```
 
-# 打包（包含 node_modules，可直接运行）
+### 1.2 打包项目
+使用我们提供的自动化脚本进行**全量打包**（包含 `node_modules`，确保离线可用）：
+
+```bash
+# 生成全量包（约 200MB - 400MB）
 ./package-for-linux.sh --full
-
-# 生成文件：upload-tool-full-YYYYMMDD.tar.gz
 ```
+
+脚本会自动生成类似 `upload-tool-full-2023xxxx.tar.gz` 的文件。
 
 ---
 
-### 步骤 2️⃣：上传到服务器
+## 2. 上传与部署 (Linux 服务器)
+
+### 2.1 上传文件
+将打包好的 `.tar.gz` 文件上传到服务器的 `/tmp` 目录。
 
 ```bash
-# 上传打包文件
-scp upload-tool-full-20260114.tar.gz root@your-server-ip:/opt/
-
-# 或者使用 rsync（断点续传）
-rsync -avz --progress upload-tool-full-20260114.tar.gz root@your-server-ip:/opt/
+# 使用 scp 上传
+scp upload-tool-full-xxxx.tar.gz root@your-server-ip:/tmp/
 ```
 
----
-
-### 步骤 3️⃣：服务器解压和启动
+### 2.2 服务器端解压与重启
+登录服务器并执行以下命令：
 
 ```bash
-# SSH 登录服务器
 ssh root@your-server-ip
 
-# 解压到部署目录
-cd /opt
-mkdir -p upload-tool
-tar -xzf upload-tool-full-20260114.tar.gz -C upload-tool/
-cd upload-tool
+# 1. 创建/进入部署目录
+mkdir -p /opt/upload-tool
+cd /opt/upload-tool
 
-# 配置环境变量（首次需要）
-cp env.example .env.local
+# 2. 解压文件 (覆盖旧文件)
+tar -xzf /tmp/upload-tool-full-xxxx.tar.gz
+
+# 3. 确保上传目录权限 (解决无法上传文件的问题)
+mkdir -p uploads/tmp uploads/archive
+chmod -R 777 uploads
+
+# 4. 重启服务
+pm2 restart upload-tool || pm2 start npm --name "upload-tool" --time -- start
+```
+
+---
+
+## 3. 常见问题修复
+
+### 3.1 启动报错 "Cannot find module 'ssh2'" 或 "Invalid ELF header"
+这是因为 Mac 上编译的 `ssh2` 模块无法在 Linux 上运行。即使是全量打包，原生模块也需要匹配系统。
+
+**解决方法：**
+在服务器上重新编译 `ssh2`：
+
+```bash
+cd /opt/upload-tool
+npm rebuild ssh2 bcryptjs
+# 或者
+npm install ssh2 bcryptjs --no-save
+# 然后重启
+pm2 restart upload-tool
+```
 nano .env.local  # 修改数据库密码等配置
 
 # 创建必要目录

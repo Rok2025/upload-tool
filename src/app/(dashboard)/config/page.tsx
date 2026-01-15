@@ -108,7 +108,16 @@ export default function ConfigPage() {
     // Form states
     const [projectForm, setProjectForm] = useState({ name: '', description: '', environment_id: 0, base_path: '' });
     const [envForm, setEnvForm] = useState({ name: '', host: '', port: 22, username: '', password: '' });
-    const [moduleForm, setModuleForm] = useState({ name: '', type: 'jar', remote_path: '', log_path: '', start_command: '', stop_command: '', restart_command: '', backup_path: '' });
+    const [moduleForm, setModuleForm] = useState<{
+        name: string;
+        type: string;
+        remote_path: string;
+        log_paths: string[];
+        start_command: string;
+        stop_command: string;
+        restart_command: string;
+        backup_path: string;
+    }>({ name: '', type: 'jar', remote_path: '', log_paths: [], start_command: '', stop_command: '', restart_command: '', backup_path: '' });
     const [envConfigForm, setEnvConfigForm] = useState({ environment_id: 0, remote_path: '', start_command: '', stop_command: '', restart_command: '' });
 
     const fetchData = async () => {
@@ -127,7 +136,19 @@ export default function ConfigPage() {
     // Reset forms
     const resetProjectForm = () => { setProjectForm({ name: '', description: '', environment_id: 0, base_path: '' }); setEditingProject(null); };
     const resetEnvForm = () => { setEnvForm({ name: '', host: '', port: 22, username: '', password: '' }); setEditingEnv(null); };
-    const resetModuleForm = () => { setModuleForm({ name: '', type: 'jar', remote_path: '', log_path: '', start_command: '', stop_command: '', restart_command: '', backup_path: '' }); setEditingModule(null); };
+    const resetModuleForm = () => {
+        setModuleForm({
+            name: '',
+            type: 'jar',
+            remote_path: '',
+            log_paths: [], // Default to empty
+            start_command: '',
+            stop_command: '',
+            restart_command: '',
+            backup_path: ''
+        });
+        setEditingModule(null);
+    };
 
     // Open edit modals
     const openEditProject = (p: Project) => {
@@ -150,7 +171,29 @@ export default function ConfigPage() {
     const openEditModule = (m: Module, projectId: number) => {
         setEditingModule(m);
         setActiveProjectId(projectId);
-        setModuleForm({ name: m.name, type: m.type, remote_path: m.remote_path, log_path: m.log_path || '', start_command: m.start_command || '', stop_command: m.stop_command || '', restart_command: m.restart_command || '', backup_path: '' });
+        let paths: string[] = [];
+        if (m.log_path) {
+            try {
+                const parsed = JSON.parse(m.log_path);
+                if (Array.isArray(parsed)) paths = parsed;
+                else paths = [m.log_path];
+            } catch (e) {
+                paths = [m.log_path];
+            }
+        }
+        if (paths.length === 0) {
+            // Do not force add default path, allow empty
+        }
+        setModuleForm({
+            name: m.name,
+            type: m.type,
+            remote_path: m.remote_path,
+            log_paths: paths,
+            start_command: m.start_command || '',
+            stop_command: m.stop_command || '',
+            restart_command: m.restart_command || '',
+            backup_path: ''
+        });
         setShowModuleModal(true);
     };
 
@@ -200,7 +243,15 @@ export default function ConfigPage() {
     const handleSaveModule = async (e: React.FormEvent) => {
         e.preventDefault();
         const method = editingModule ? 'PUT' : 'POST';
-        const body = editingModule ? { ...moduleForm, id: editingModule.id } : { ...moduleForm, project_id: activeProjectId };
+        const finalLogPath = JSON.stringify(moduleForm.log_paths.filter(p => p.trim()));
+        const bodyContent = {
+            ...moduleForm,
+            log_path: finalLogPath
+        };
+        // Remove log_paths from request body to match API expectation (though API ignores extras usually, cleaner to remove)
+        const { log_paths, ...apiBody } = bodyContent as any;
+
+        const body = editingModule ? { ...apiBody, id: editingModule.id } : { ...apiBody, project_id: activeProjectId };
         const res = await fetch('/api/modules', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         if (res.ok) { setShowModuleModal(false); resetModuleForm(); fetchData(); }
     };
@@ -630,7 +681,7 @@ export default function ConfigPage() {
                                     <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'normal', marginLeft: '8px' }}>(基于项目根路径拼接)</span>
                                 </label>
                                 <div className="path-input-container">
-                                    <input required value={moduleForm.remote_path} onChange={e => setModuleForm({ ...moduleForm, remote_path: e.target.value })} placeholder="例如：gateway" />
+                                    <input value={moduleForm.remote_path} onChange={e => setModuleForm({ ...moduleForm, remote_path: e.target.value })} placeholder="例如：gateway" />
                                     {activeProjectId && projects.find(p => p.id === activeProjectId)?.base_path && moduleForm.remote_path.startsWith(projects.find(p => p.id === activeProjectId)?.base_path || '---') && (
                                         <button
                                             type="button"
@@ -653,9 +704,85 @@ export default function ConfigPage() {
                                     </div>
                                 )}
                             </div>
+
                             <div className="form-group">
-                                <label>日志路径</label>
-                                <input value={moduleForm.log_path} onChange={e => setModuleForm({ ...moduleForm, log_path: e.target.value })} placeholder="/var/log/my-app.log" />
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                    <label style={{ marginBottom: 0 }}>
+                                        日志路径 (支持多个)
+                                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 'normal', marginLeft: '8px' }}>(基于项目根路径拼接)</span>
+                                    </label>
+                                    <button
+                                        type="button"
+                                        className="btn-dashed small"
+                                        onClick={() => {
+                                            // Generate default: remote_path + "/logs/" + remote_path + ".log"
+                                            let defaultLog = '';
+                                            if (moduleForm.remote_path) {
+                                                let rp = moduleForm.remote_path.trim();
+                                                // Remove leading/trailing slashes and spaces
+                                                rp = rp.replace(/^\/+|\/+$/g, '');
+
+                                                const name = rp.split('/').pop() || 'app';
+                                                // Combined logic: remote_path + /logs/ + name + .log
+                                                defaultLog = `logs/${name}.log`;
+                                            } else {
+                                                defaultLog = 'logs/app.log';
+                                            }
+                                            setModuleForm({ ...moduleForm, log_paths: [...moduleForm.log_paths, defaultLog] });
+                                        }}
+                                    >
+                                        + 添加
+                                    </button>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    {moduleForm.log_paths.map((path, index) => (
+                                        <div key={index} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                <input
+                                                    value={path}
+                                                    onChange={e => {
+                                                        const newPaths = [...moduleForm.log_paths];
+                                                        newPaths[index] = e.target.value;
+                                                        setModuleForm({ ...moduleForm, log_paths: newPaths });
+                                                    }}
+                                                    placeholder="logs/app.log"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="btn-danger"
+                                                    style={{ padding: '0 12px' }}
+                                                    onClick={() => {
+                                                        const newPaths = moduleForm.log_paths.filter((_, i) => i !== index);
+                                                        setModuleForm({ ...moduleForm, log_paths: newPaths });
+                                                    }}
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                            <div style={{
+                                                fontSize: '12px',
+                                                color: '#64748b',
+                                                background: '#f1f5f9',
+                                                padding: '4px 8px',
+                                                borderRadius: '4px',
+                                                marginTop: '2px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '4px'
+                                            }}>
+                                                <span style={{ color: '#475569', fontWeight: 500 }}>最终路径:</span>
+                                                <span style={{ fontFamily: 'monospace', color: '#059669', userSelect: 'all' }}>
+                                                    {(() => {
+                                                        const basePath = projects.find(p => p.id === activeProjectId)?.base_path || '';
+                                                        const cleanBase = basePath.trim().replace(/\/+$/, '');
+                                                        const cleanPath = path.trim().replace(/^\/+/, '');
+                                                        return cleanBase && cleanPath ? `${cleanBase}/${cleanPath}` : (cleanBase || cleanPath);
+                                                    })()}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                             <div className="grid-2">
                                 <div className="form-group">

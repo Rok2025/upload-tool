@@ -7,14 +7,19 @@ interface LogModalProps {
     moduleId: number;
     moduleName: string;
     environmentId: number | null;
+    initialLogPaths?: string[];
     onClose: () => void;
 }
 
-export function LogModal({ moduleId, moduleName, environmentId, onClose }: LogModalProps) {
+export function LogModal({ moduleId, moduleName, environmentId, initialLogPaths = [], onClose }: LogModalProps) {
     const [logs, setLogs] = useState<string[]>([]);
     const [isStreaming, setIsStreaming] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
     const [mounted, setMounted] = useState(false);
+
+    // Log selection
+    const [availableLogs, setAvailableLogs] = useState<string[]>(initialLogPaths);
+    const [selectedLogPath, setSelectedLogPath] = useState<string>(initialLogPaths.length > 0 ? initialLogPaths[0] : '');
 
     const scrollRef = useRef<HTMLDivElement>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
@@ -51,11 +56,13 @@ export function LogModal({ moduleId, moduleName, environmentId, onClose }: LogMo
             return;
         }
 
-        setLogs([`[SYSTEM] 正在连接到 ${moduleName} 的日志流...`]);
+        const currentLogPath = selectedLogPath;
+        setLogs([`[SYSTEM] 正在连接到 ${moduleName} 的日志流... (${currentLogPath || '默认'})`]);
         setConnectionStatus('connecting');
         setIsStreaming(true);
 
-        const eventSource = new EventSource(`/api/logs?moduleId=${moduleId}&environmentId=${environmentId}`);
+        const url = `/api/logs?moduleId=${moduleId}&environmentId=${environmentId}${currentLogPath ? `&logPath=${encodeURIComponent(currentLogPath)}` : ''}`;
+        const eventSource = new EventSource(url);
         eventSourceRef.current = eventSource;
 
         eventSource.onopen = () => {
@@ -121,7 +128,30 @@ export function LogModal({ moduleId, moduleName, environmentId, onClose }: LogMo
             <div className="log-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="modal-header">
                     <div>
-                        <h3>实时运行日志 - {moduleName}</h3>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <h3>实时运行日志 - {moduleName}</h3>
+                            {availableLogs.length > 1 && (
+                                <select
+                                    className="log-selector"
+                                    value={selectedLogPath}
+                                    onChange={e => {
+                                        setSelectedLogPath(e.target.value);
+                                        // If streaming, restart? Or let user click start?
+                                        // Better to stop first if streaming.
+                                        if (isStreaming) {
+                                            stopStreaming();
+                                            // Optional: auto-restart logic could be here but button is safer
+                                        }
+                                        setLogs([]); // Clear logs on switch
+                                    }}
+                                    onClick={e => e.stopPropagation()}
+                                >
+                                    {availableLogs.map(path => (
+                                        <option key={path} value={path}>{path}</option>
+                                    ))}
+                                </select>
+                            )}
+                        </div>
                         <div className="status-indicator">
                             <span className="status-dot" style={{ background: getStatusColor() }}></span>
                             <span className="status-text">{getStatusText()}</span>
@@ -336,6 +366,16 @@ export function LogModal({ moduleId, moduleName, environmentId, onClose }: LogMo
 
                     .btn-secondary:hover {
                         background: #475569;
+                    }
+                    
+                    .log-selector {
+                        background: #1e293b;
+                        color: #e2e8f0;
+                        border: 1px solid #334155;
+                        padding: 2px 8px;
+                        border-radius: 4px;
+                        font-size: 13px;
+                        max-width: 300px;
                     }
                 `}</style>
             </div>

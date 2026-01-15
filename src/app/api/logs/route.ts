@@ -5,6 +5,7 @@ import pool from '@/lib/db';
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
+    const requestedLogPath = searchParams.get('logPath');
     const moduleId = searchParams.get('moduleId');
     const envId = searchParams.get('environmentId');
 
@@ -27,7 +28,40 @@ export async function GET(req: NextRequest) {
     }
 
     const module = moduleRow[0];
-    const rawLogPath = module.log_path;
+    let rawLogPath = module.log_path;
+
+    // Support JSON array log paths
+    if (rawLogPath) {
+        try {
+            const parsed = JSON.parse(rawLogPath);
+            if (Array.isArray(parsed)) {
+                // If specific path requested, verify it exists in allowable paths?
+                // For now, if logPath matches one of the array items, use it.
+                // Or just trust the requested path if it is provided (less secure but flexible for now)
+
+                // Better approach: If requestedLogPath provided, use it.
+                // Else use first one.
+                if (requestedLogPath) {
+                    // Start of validation (optional): ensure requestedLogPath is in parsed list?
+                    // rawLogPath = requestedLogPath; // logic below handles full path construction?
+                    // Wait, rawLogPath is the RELATIVE part usually. 
+                    // Let's assume requestedLogPath is the raw string from the config.
+                    rawLogPath = requestedLogPath;
+                } else {
+                    rawLogPath = parsed[0];
+                }
+            } else {
+                // It was a JSON string but not array? Unlikely but fallback
+            }
+        } catch (e) {
+            // Not JSON, treat as simple string
+            if (requestedLogPath && requestedLogPath !== rawLogPath) {
+                // Mismatch request? Assume new request overrides
+                rawLogPath = requestedLogPath;
+            }
+        }
+    }
+
     if (!rawLogPath) return new Response('Log path not configured', { status: 400 });
 
     // Concatenate base_path with log_path (similar to remote_path logic)

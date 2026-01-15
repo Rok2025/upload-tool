@@ -29,6 +29,8 @@ export default function LogPage() {
     const [selectedProjectId, setSelectedProjectId] = useState<string>('');
     const [selectedModuleId, setSelectedModuleId] = useState<string>('');
     const [selectedEnvId, setSelectedEnvId] = useState<string>('');
+    const [availableLogPaths, setAvailableLogPaths] = useState<string[]>([]);
+    const [selectedLogPath, setSelectedLogPath] = useState<string>('');
 
     // Log state
     const [logs, setLogs] = useState<string[]>([]);
@@ -78,6 +80,31 @@ export default function LogPage() {
         }
     }, [selectedProjectId, projects]);
 
+    // Parse log paths when module selected
+    useEffect(() => {
+        if (selectedModuleId) {
+            const module = modules.find(m => m.id === parseInt(selectedModuleId));
+            if (module) {
+                let paths: string[] = [];
+                if (module.log_path) {
+                    try {
+                        const parsed = JSON.parse(module.log_path);
+                        if (Array.isArray(parsed)) paths = parsed;
+                        else paths = [module.log_path];
+                    } catch (e) {
+                        paths = [module.log_path];
+                    }
+                }
+                setAvailableLogPaths(paths);
+                if (paths.length > 0) setSelectedLogPath(paths[0]);
+                else setSelectedLogPath('');
+            }
+        } else {
+            setAvailableLogPaths([]);
+            setSelectedLogPath('');
+        }
+    }, [selectedModuleId, modules]);
+
     // Auto-scroll to bottom
     useEffect(() => {
         if (scrollRef.current) {
@@ -93,16 +120,26 @@ export default function LogPage() {
 
         // Check if module has log_path configured
         const module = modules.find(m => m.id === parseInt(selectedModuleId));
-        if (!module?.log_path) {
+        let hasLogs = false;
+        if (module?.log_path) {
+            try {
+                const p = JSON.parse(module.log_path);
+                if (Array.isArray(p) ? p.length > 0 : !!p) hasLogs = true;
+            } catch { hasLogs = !!module.log_path; }
+        }
+
+        if (!hasLogs) {
             setLogs(['[ERROR] 该模块未配置日志路径']);
             return;
         }
 
-        setLogs([`[SYSTEM] 正在连接到日志流...`]);
+        const currentLogPath = selectedLogPath;
+        setLogs([`[SYSTEM] 正在连接到日志流... (${currentLogPath || '默认'})`]);
         setConnectionStatus('connecting');
         setIsStreaming(true);
 
-        const eventSource = new EventSource(`/api/logs?moduleId=${selectedModuleId}&environmentId=${selectedEnvId}`);
+        const url = `/api/logs?moduleId=${selectedModuleId}&environmentId=${selectedEnvId}${currentLogPath ? `&logPath=${encodeURIComponent(currentLogPath)}` : ''}`;
+        const eventSource = new EventSource(url);
         eventSourceRef.current = eventSource;
 
         eventSource.onopen = () => {
@@ -189,9 +226,17 @@ export default function LogPage() {
                     disabled={isStreaming || !selectedProjectId}
                 >
                     <option value="">选择模块</option>
-                    {modules.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
+                    {modules
+                        .filter(m => {
+                            if (!m.log_path) return false;
+                            try {
+                                const p = JSON.parse(m.log_path);
+                                return Array.isArray(p) ? p.length > 0 : !!p;
+                            } catch { return !!m.log_path; }
+                        })
+                        .map(m => (
+                            <option key={m.id} value={m.id}>{m.name}</option>
+                        ))}
                 </select>
 
                 <select
@@ -204,6 +249,24 @@ export default function LogPage() {
                         <option key={e.id} value={e.id}>{e.name}</option>
                     ))}
                 </select>
+
+                {availableLogPaths.length > 0 && (
+                    <div className="radio-group">
+                        {availableLogPaths.map((path, idx) => (
+                            <label key={idx} className={`radio-label ${selectedLogPath === path ? 'active' : ''}`}>
+                                <input
+                                    type="radio"
+                                    name="logPath"
+                                    value={path}
+                                    checked={selectedLogPath === path}
+                                    onChange={(e) => setSelectedLogPath(e.target.value)}
+                                    disabled={isStreaming}
+                                />
+                                <span className="path-text">{path}</span>
+                            </label>
+                        ))}
+                    </div>
+                )}
 
                 <div className="button-group">
                     {!isStreaming ? (
@@ -295,6 +358,33 @@ export default function LogPage() {
         .log-controls select:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            background: #1e293b;
+            padding: 4px 12px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            flex-wrap: wrap;
+        }
+        .radio-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #94a3b8;
+            transition: color 0.2s;
+        }
+        .radio-label.active {
+            color: #38bdf8;
+            font-weight: 500;
+        }
+        .radio-label input {
+            accent-color: #38bdf8;
         }
 
         .button-group {
