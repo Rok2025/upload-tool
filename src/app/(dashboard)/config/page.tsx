@@ -32,6 +32,8 @@ interface Module {
     start_command?: string;
     stop_command?: string;
     restart_command?: string;
+    backup_path?: string;
+    allowed_files?: string;
     env_configs?: ModuleEnvConfig[];
 }
 
@@ -51,7 +53,7 @@ export default function ConfigPage() {
     const [projects, setProjects] = useState<Project[]>([]);
     const [environments, setEnvironments] = useState<Environment[]>([]);
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState<TabType>('environments');
+    const [activeTab, setActiveTab] = useState<TabType>('projects');
 
     // Modal states
     const [showProjectModal, setShowProjectModal] = useState(false);
@@ -68,6 +70,14 @@ export default function ConfigPage() {
     const [editingEnvConfig, setEditingEnvConfig] = useState<ModuleEnvConfig | null>(null);
     const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
     const [moduleEnvConfigs, setModuleEnvConfigs] = useState<ModuleEnvConfig[]>([]);
+
+    // Collapsed state for projects (key: projectId, value: true = expanded)
+    // Default: false (collapsed)
+    const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({});
+
+    const toggleProject = (projectId: number) => {
+        setExpandedProjects(prev => ({ ...prev, [projectId]: !prev[projectId] }));
+    };
 
     const [testingEnvId, setTestingEnvId] = useState<number | string | null>(null);
     const [testResults, setTestResults] = useState<Record<number | string, { success: boolean; message: string }>>({});
@@ -117,7 +127,8 @@ export default function ConfigPage() {
         stop_command: string;
         restart_command: string;
         backup_path: string;
-    }>({ name: '', type: 'jar', remote_path: '', log_paths: [], start_command: '', stop_command: '', restart_command: '', backup_path: '' });
+        allowed_files: string;
+    }>({ name: '', type: 'jar', remote_path: '', log_paths: [], start_command: '', stop_command: '', restart_command: '', backup_path: '', allowed_files: '' });
     const [envConfigForm, setEnvConfigForm] = useState({ environment_id: 0, remote_path: '', start_command: '', stop_command: '', restart_command: '' });
 
     const fetchData = async () => {
@@ -145,7 +156,8 @@ export default function ConfigPage() {
             start_command: '',
             stop_command: '',
             restart_command: '',
-            backup_path: ''
+            backup_path: '',
+            allowed_files: ''
         });
         setEditingModule(null);
     };
@@ -192,7 +204,8 @@ export default function ConfigPage() {
             start_command: m.start_command || '',
             stop_command: m.stop_command || '',
             restart_command: m.restart_command || '',
-            backup_path: ''
+            backup_path: '',
+            allowed_files: m.allowed_files || ''
         });
         setShowModuleModal(true);
     };
@@ -244,8 +257,15 @@ export default function ConfigPage() {
         e.preventDefault();
         const method = editingModule ? 'PUT' : 'POST';
         const finalLogPath = JSON.stringify(moduleForm.log_paths.filter(p => p.trim()));
+
+        // Auto-derive allowed_files based on type
+        let derivedAllowedFiles = '';
+        if (moduleForm.type === 'jar') derivedAllowedFiles = '.jar';
+        else if (moduleForm.type === 'zip' || moduleForm.type === 'static') derivedAllowedFiles = '.zip';
+
         const bodyContent = {
             ...moduleForm,
+            allowed_files: derivedAllowedFiles,
             log_path: finalLogPath
         };
         // Remove log_paths from request body to match API expectation (though API ignores extras usually, cleaner to remove)
@@ -386,45 +406,79 @@ export default function ConfigPage() {
                         </div>
 
                         <div className="project-list">
-                            {projects.map(project => (
-                                <div key={project.id} className="project-card card">
-                                    <div className="project-info">
-                                        <div className="title-row">
-                                            <h3>{project.name}</h3>
-                                            <div className="project-actions">
-                                                <button type="button" className="btn-dashed small" onClick={() => handleAddModule(project.id)}>+ 添加模块</button>
-                                                <button type="button" className="icon-btn" onClick={() => openEditProject(project)}>✏️</button>
-                                                <button type="button" className="icon-btn danger" onClick={() => setShowDeleteConfirm({ type: 'projects', id: project.id, name: project.name })}>🗑️</button>
+                            {projects.map(project => {
+                                const isExpanded = !!expandedProjects[project.id];
+                                return (
+                                    <div key={project.id} className="project-card card">
+                                        <div className="project-info">
+                                            <div className="title-row">
+                                                <div
+                                                    style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', flex: 1 }}
+                                                    onClick={() => toggleProject(project.id)}
+                                                    className="project-title-clickable"
+                                                >
+                                                    <div
+                                                        style={{
+                                                            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                                            transition: 'transform 0.2s',
+                                                            fontSize: '12px',
+                                                            color: '#64748b',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            justifyContent: 'center',
+                                                            background: '#f1f5f9',
+                                                            width: '24px',
+                                                            height: '24px',
+                                                            borderRadius: '50%'
+                                                        }}
+                                                    >
+                                                        ▶
+                                                    </div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <h3 style={{ margin: 0 }}>{project.name}</h3>
+                                                        <span style={{ fontSize: '12px', color: '#64748b', background: '#f8fafc', padding: '2px 8px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                                                            {project.modules.length} 个模块
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                <div className="project-actions">
+                                                    <button type="button" className="btn-dashed small" onClick={() => handleAddModule(project.id)}>+ 添加模块</button>
+                                                    <button type="button" className="icon-btn" onClick={() => openEditProject(project)}>✏️</button>
+                                                    <button type="button" className="icon-btn danger" onClick={() => setShowDeleteConfirm({ type: 'projects', id: project.id, name: project.name })}>🗑️</button>
+                                                </div>
                                             </div>
+                                            {project.base_path && <div className="path-label">📂 {project.base_path}</div>}
+                                            <p>{project.description || '暂无描述'}</p>
                                         </div>
-                                        {project.base_path && <div className="path-label">📂 {project.base_path}</div>}
-                                        <p>{project.description || '暂无描述'}</p>
-                                    </div>
 
-                                    <div className="module-section">
-                                        {project.modules.length > 0 ? (
-                                            <table className="mini-table">
-                                                <thead><tr><th>模块名</th><th>类型</th><th>远程路径</th><th>操作</th></tr></thead>
-                                                <tbody>
-                                                    {project.modules.map((module) => (
-                                                        <tr key={module.id}>
-                                                            <td>{module.name}</td>
-                                                            <td><span className="type-tag">{module.type}</span></td>
-                                                            <td><code>{module.remote_path}</code></td>
-                                                            <td>
-                                                                <button type="button" className="text-btn" onClick={() => openEditModule(module, project.id)}>编辑</button>
-                                                                <button type="button" className="text-btn danger" onClick={() => setShowDeleteConfirm({ type: 'modules', id: module.id, name: module.name })}>删除</button>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        ) : (
-                                            <p className="empty-text">暂无模块，请先添加</p>
+                                        {isExpanded && (
+                                            <div className="module-section">
+                                                {project.modules.length > 0 ? (
+                                                    <table className="mini-table">
+                                                        <thead><tr><th>模块名</th><th>类型</th><th>限制文件</th><th>远程路径</th><th>操作</th></tr></thead>
+                                                        <tbody>
+                                                            {project.modules.map((module) => (
+                                                                <tr key={module.id}>
+                                                                    <td>{module.name}</td>
+                                                                    <td><span className="type-tag">{module.type}</span></td>
+                                                                    <td><code>{module.allowed_files || '无限制'}</code></td>
+                                                                    <td><code>{module.remote_path}</code></td>
+                                                                    <td>
+                                                                        <button type="button" className="text-btn" onClick={() => openEditModule(module, project.id)}>编辑</button>
+                                                                        <button type="button" className="text-btn danger" onClick={() => setShowDeleteConfirm({ type: 'modules', id: module.id, name: module.name })}>删除</button>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                ) : (
+                                                    <p className="empty-text">暂无模块，请先添加</p>
+                                                )}
+                                            </div>
                                         )}
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                             {projects.length === 0 && <div className="card empty-card">尚无项目，请点击上方按钮新增</div>}
                         </div>
                     </div>
@@ -671,10 +725,12 @@ export default function ConfigPage() {
                                     <select value={moduleForm.type} onChange={e => setModuleForm({ ...moduleForm, type: e.target.value })}>
                                         <option value="jar">Java JAR</option>
                                         <option value="zip">ZIP 压缩包</option>
-                                        <option value="static">静态资源</option>
+                                        {/* <option value="static">静态资源</option> */}
                                     </select>
+
                                 </div>
                             </div>
+
                             <div className="form-group">
                                 <label>
                                     远端部署路径
@@ -803,23 +859,26 @@ export default function ConfigPage() {
                                 <button type="submit" className="btn-primary">保存</button>
                             </div>
                         </form>
-                    </div>
-                </div>
+                    </div >
+                </div >
             )}
 
+
             {/* Delete Confirmation */}
-            {showDeleteConfirm && (
-                <div className="modal-overlay" onClick={() => setShowDeleteConfirm(null)}>
-                    <div className="modal-content small" onClick={e => e.stopPropagation()}>
-                        <h3>确认删除</h3>
-                        <p>确定要删除 <strong>{showDeleteConfirm.name}</strong> 吗？此操作不可撤销。</p>
-                        <div className="modal-actions">
-                            <button type="button" className="btn-secondary" onClick={() => setShowDeleteConfirm(null)}>取消</button>
-                            <button type="button" className="btn-danger" onClick={handleDelete}>删除</button>
+            {
+                showDeleteConfirm && (
+                    <div className="modal-overlay" onClick={() => setShowDeleteConfirm(null)}>
+                        <div className="modal-content small" onClick={e => e.stopPropagation()}>
+                            <h3>确认删除</h3>
+                            <p>确定要删除 <strong>{showDeleteConfirm.name}</strong> 吗？此操作不可撤销。</p>
+                            <div className="modal-actions">
+                                <button type="button" className="btn-secondary" onClick={() => setShowDeleteConfirm(null)}>取消</button>
+                                <button type="button" className="btn-danger" onClick={handleDelete}>删除</button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             <style jsx>{`
         .config-layout { display: flex; gap: 24px; min-height: calc(100vh - 108px); }
@@ -960,6 +1019,6 @@ export default function ConfigPage() {
         }
         .path-preview code { color: #059669; font-weight: 600; }
       `}</style>
-        </div>
+        </div >
     );
 }

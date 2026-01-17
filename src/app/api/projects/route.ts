@@ -12,13 +12,13 @@ export async function GET() {
             SELECT p.*, e.name as environment_name 
             FROM projects p
             LEFT JOIN environments e ON p.environment_id = e.id
-            ORDER BY p.created_at DESC
+            ORDER BY p.name ASC
         `);
 
         // Get modules for each project
         for (const project of projects) {
             const [modules]: any = await pool.query(
-                'SELECT id, name, type, remote_path, log_path, start_command, stop_command, restart_command, backup_path FROM modules WHERE project_id = ?',
+                'SELECT id, name, type, remote_path, log_path, start_command, stop_command, restart_command, backup_path, allowed_files FROM modules WHERE project_id = ?',
                 [project.id]
             );
 

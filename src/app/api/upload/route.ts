@@ -22,6 +22,21 @@ export async function POST(req: NextRequest) {
         // Ensure upload directory exists
         await fs.mkdir(chunkDir, { recursive: true });
 
+        // Validate file type if moduleId is provided
+        const moduleId = formData.get('moduleId') as string;
+        if (moduleId) {
+            const pool = (await import('@/lib/db')).default;
+            const [modules]: any = await pool.query('SELECT allowed_files FROM modules WHERE id = ?', [moduleId]);
+            if (modules.length > 0 && modules[0].allowed_files) {
+                const allowed: string[] = modules[0].allowed_files.split(',').map((s: string) => s.trim().toLowerCase());
+                const ext = path.extname(fileName).toLowerCase();
+                if (!allowed.includes(ext)) {
+                    // Clean up if it's the first chunk, though usually we fail fast
+                    return NextResponse.json({ error: `Invalid file type. Allowed: ${allowed.join(', ')}` }, { status: 400 });
+                }
+            }
+        }
+
         const chunkPath = path.join(chunkDir, `${chunkIndex}`);
         const arrayBuffer = await chunk.arrayBuffer();
         await fs.writeFile(chunkPath, Buffer.from(arrayBuffer));

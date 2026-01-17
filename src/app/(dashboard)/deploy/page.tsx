@@ -86,14 +86,27 @@ export default function DeployPage() {
 
     const handleDrop = (e: React.DragEvent, moduleId: number) => {
         e.preventDefault();
+        e.stopPropagation();
         setIsDragging(prev => ({ ...prev, [moduleId]: false }));
 
         const files = e.dataTransfer.files;
         if (files && files.length > 0) {
             const file = files[0];
-            updateModuleState(moduleId, { file, deployed: false });
-            // Optionally auto-trigger upload
-            // setTimeout(() => handleUpload(moduleId, file), 100);
+            const module = selectedProject?.modules.find((m: any) => m.id === moduleId);
+            if (module) {
+                const allowedStr = getAllowedExtensions(module);
+                if (allowedStr) {
+                    const allowed = allowedStr.split(',').map((ext: string) => ext.trim().toLowerCase());
+                    const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
+                    const isAllowed = allowed.some((ext: string) => ext === fileExt || file.name.toLowerCase().endsWith(ext));
+
+                    if (!isAllowed) {
+                        updateModuleState(moduleId, { status: `错误: 文件类型不匹配 (允许: ${allowedStr})` });
+                        return;
+                    }
+                }
+            }
+            updateModuleState(moduleId, { file, deployed: false, status: '' });
         }
     };
 
@@ -118,9 +131,14 @@ export default function DeployPage() {
                 formData.append('totalChunks', totalChunks.toString());
                 formData.append('fileName', file.name);
                 formData.append('fileHash', fileHash);
+                // Also send moduleId so backend can validate if it wants to (though we do it client side now)
+                formData.append('moduleId', moduleId.toString());
 
                 const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
-                if (!uploadRes.ok) throw new Error('上传分片失败');
+                if (!uploadRes.ok) {
+                    const err = await uploadRes.json();
+                    throw new Error(err.error || '上传分片失败');
+                }
 
                 updateModuleState(moduleId, { progress: Math.round(((i + 1) / totalChunks) * 100) });
             }
@@ -184,6 +202,15 @@ export default function DeployPage() {
                 duration
             });
         }
+    };
+
+    // Helper to get allowed extensions
+    const getAllowedExtensions = (module: any) => {
+        if (module.allowed_files) return module.allowed_files;
+        // Fallback based on type
+        if (module.type === 'jar') return '.jar';
+        if (module.type === 'zip' || module.type === 'static') return '.zip';
+        return '';
     };
 
     const handleManualRestart = async (moduleId: number) => {
@@ -370,6 +397,8 @@ export default function DeployPage() {
                 {selectedProject ? (
                     <div className="module-grid">
                         {selectedProject.modules?.map((m: any) => {
+                            // Debug log to verify allowed_files is present
+                            // console.log('Module render:', m.name, m.allowed_files); 
                             const state = deployStates[m.id] || { status: '', progress: 0, file: null, isUploading: false, timestamp: null, duration: null, deployed: false, skipRestart: false };
                             const dragging = isDragging[m.id];
 
@@ -405,7 +434,25 @@ export default function DeployPage() {
                                                 type="file"
                                                 id={`file-${m.id}`}
                                                 className="hidden-input"
-                                                onChange={(e) => updateModuleState(m.id, { file: e.target.files?.[0] || null, deployed: false })}
+                                                accept={getAllowedExtensions(m) || undefined}
+                                                onChange={(e) => {
+                                                    const file = e.target.files?.[0];
+                                                    if (file) {
+                                                        const allowedStr = getAllowedExtensions(m);
+                                                        if (allowedStr) {
+                                                            const allowed = allowedStr.split(',').map((ext: string) => ext.trim().toLowerCase());
+                                                            const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
+                                                            const isAllowed = allowed.some((ext: string) => ext === fileExt || file.name.toLowerCase().endsWith(ext));
+
+                                                            if (!isAllowed) {
+                                                                updateModuleState(m.id, { status: `错误: 文件类型不匹配 (允许: ${allowedStr})` });
+                                                                e.target.value = ''; // Reset input
+                                                                return;
+                                                            }
+                                                        }
+                                                        updateModuleState(m.id, { file, deployed: false, status: '' });
+                                                    }
+                                                }}
                                                 disabled={state.isUploading}
                                             />
                                             <div className="zone-content">
