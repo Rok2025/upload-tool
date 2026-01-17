@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 
+import { DeploymentProvider } from '@/components/DeploymentProvider';
+
 export default function DashboardLayout({
   children,
 }: {
@@ -84,7 +86,9 @@ export default function DashboardLayout({
           </div>
         </header>
         <div className="content">
-          {children}
+          <DeploymentProvider>
+            {children}
+          </DeploymentProvider>
         </div>
       </main>
       <style jsx global>{`

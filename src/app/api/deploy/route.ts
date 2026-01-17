@@ -30,7 +30,16 @@ export async function POST(req: NextRequest) {
         currentUserId = user.id;
         console.log(`[Deploy] User authenticated: ${user.username} (ID: ${user.id})`);
 
-        // 2. Fetch Module & Environment Info
+        // 0. Initial Log (New Strategy: Persistence)
+        console.log(`[Deploy] Initializing 'deploying' status in DB...`);
+        const [initResult]: any = await pool.query(
+            'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_type, version, start_time) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [currentUserId, currentModuleId, currentEnvId, 'deploying', 'deploy', 'pending', deployStartTime] // version pending until generated
+        );
+        const logId = initResult.insertId;
+        console.log(`[Deploy] Log record created with ID: ${logId}`);
+
+        // 3. Fetch Module & Environment Info
         console.log(`[Deploy] Fetching module info for ID: ${currentModuleId}`);
         const [moduleRow]: any = await pool.query(`
             SELECT m.*, p.environment_id as project_environment_id, p.base_path as project_base_path
@@ -41,6 +50,11 @@ export async function POST(req: NextRequest) {
 
         if (!moduleRow.length) {
             console.error(`[Deploy] Module not found: ${currentModuleId}`);
+            // Fail log
+            await pool.query(
+                'UPDATE deploy_logs SET status = ?, log_output = ?, end_time = ? WHERE id = ?',
+                ['failed', '找不到该模块配置', new Date(), logId]
+            );
             return NextResponse.json({ error: '找不到该模块配置，请先在【项目配置】中添加。' }, { status: 404 });
         }
         const module = moduleRow[0];
@@ -50,9 +64,18 @@ export async function POST(req: NextRequest) {
         const effectiveEnvironmentId = bodyEnvironmentId || module.project_environment_id;
         currentEnvId = effectiveEnvironmentId;
 
+        // Update Log with correct Environment ID if it changed (though usually body has it)
+        if (effectiveEnvironmentId !== bodyEnvironmentId) {
+            await pool.query('UPDATE deploy_logs SET environment_id = ? WHERE id = ?', [effectiveEnvironmentId, logId]);
+        }
+
         if (!effectiveEnvironmentId) {
-            console.error(`[Deploy] No environment configured for project: ${module.project_id}`);
-            return NextResponse.json({ error: '该项目尚未配置服务器，请先在【项目配置】中绑定服务器。' }, { status: 400 });
+            const msg = '该项目尚未配置服务器，请先在【项目配置】中绑定服务器。';
+            await pool.query(
+                'UPDATE deploy_logs SET status = ?, log_output = ?, end_time = ? WHERE id = ?',
+                ['failed', msg, new Date(), logId]
+            );
+            return NextResponse.json({ error: msg }, { status: 400 });
         }
 
         // 3. Fetch Environment-specific Configuration
@@ -68,34 +91,37 @@ export async function POST(req: NextRequest) {
         const effectiveStopCommand = config?.stop_command || module.stop_command;
         const effectiveRestartCommand = config?.restart_command || module.restart_command;
 
-        // DEBUG: Log restart command configuration
-        console.log(`[Deploy] ========== RESTART COMMAND DEBUG ==========`);
-        console.log(`[Deploy] module.restart_command: ${module.restart_command}`);
-        console.log(`[Deploy] config?.restart_command: ${config?.restart_command}`);
-        console.log(`[Deploy] effectiveRestartCommand: ${effectiveRestartCommand}`);
-        console.log(`[Deploy] effectiveStartCommand: ${effectiveStartCommand}`);
-        console.log(`[Deploy] skipRestart parameter: ${skipRestart}`);
-        console.log(`[Deploy] =============================================`);
-
         // Path concatenation
         const basePath = module.project_base_path || '';
         const effectiveRemotePath = path.join(basePath, rawRemotePath || '');
         console.log(`[Deploy] Resolved remote path: ${effectiveRemotePath}`);
 
         if (!effectiveRemotePath || effectiveRemotePath === '.') {
+            await pool.query(
+                'UPDATE deploy_logs SET status = ?, log_output = ?, end_time = ? WHERE id = ?',
+                ['failed', '解析后的部署路径不能为空。', new Date(), logId]
+            );
             return NextResponse.json({ error: '解析后的部署路径不能为空。' }, { status: 400 });
         }
 
         // Project Permission Check
         console.log(`[Deploy] Checking project-specific deploy permission...`);
         if (user.role !== 'admin' && !(await requireDeployPermission(req, module.project_id))) {
-            console.warn(`[Deploy] User ${user.username} lacks permission for project ${module.project_id}`);
-            return NextResponse.json({ error: '您没有该项目的部署权限。' }, { status: 403 });
+            const msg = '您没有该项目的部署权限。';
+            await pool.query(
+                'UPDATE deploy_logs SET status = ?, log_output = ?, end_time = ? WHERE id = ?',
+                ['failed', msg, new Date(), logId]
+            );
+            return NextResponse.json({ error: msg }, { status: 403 });
         }
         console.log(`[Deploy] Permission granted.`);
 
         const [envRow]: any = await pool.query('SELECT * FROM environments WHERE id = ?', [effectiveEnvironmentId]);
         if (!envRow.length) {
+            await pool.query(
+                'UPDATE deploy_logs SET status = ?, log_output = ?, end_time = ? WHERE id = ?',
+                ['failed', '找不到服务器配置。', new Date(), logId]
+            );
             return NextResponse.json({ error: '找不到服务器配置。' }, { status: 404 });
         }
         const env = envRow[0];
@@ -115,10 +141,12 @@ export async function POST(req: NextRequest) {
             const stats = await fs.stat(localFilePath);
             console.log(`[Deploy] File found! Size: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
         } catch (error: any) {
-            console.error(`[Deploy] File not found at: ${localFilePath}`);
-            console.error(`[Deploy] Current working directory: ${process.cwd()}`);
-            console.error(`[Deploy] UPLOAD_DIR env: ${process.env.UPLOAD_DIR}`);
-            throw new Error(`No such file: ${fileName} (looked in ${uploadDir})`);
+            const msg = `No such file: ${fileName}`;
+            await pool.query(
+                'UPDATE deploy_logs SET status = ?, log_output = ?, end_time = ? WHERE id = ?',
+                ['failed', msg, new Date(), logId]
+            );
+            throw new Error(msg);
         }
 
         await ssh.connect({
@@ -154,6 +182,9 @@ export async function POST(req: NextRequest) {
             now.getDate().toString().padStart(2, '0') +
             now.getHours().toString().padStart(2, '0') +
             now.getMinutes().toString().padStart(2, '0');
+
+        // Update version in DB now that we have it
+        await pool.query('UPDATE deploy_logs SET version = ? WHERE id = ?', [suffix, logId]);
 
         const ext = path.extname(fileName);
         const basename = path.basename(fileName, ext);
@@ -267,14 +298,12 @@ export async function POST(req: NextRequest) {
         }
 
         // 4. Log Success
-        if (currentUserId && currentModuleId && currentEnvId) {
-            console.log(`[Deploy] Recording success log to DB...`);
-            const deployEndTime = new Date();
-            await pool.query(
-                'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_type, version, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                [currentUserId, currentModuleId, currentEnvId, 'success', 'deploy', suffix, deployStartTime, deployEndTime]
-            );
-        }
+        console.log(`[Deploy] Recording success log to DB...`);
+        const deployEndTime = new Date();
+        await pool.query(
+            'UPDATE deploy_logs SET status = ?, end_time = ? WHERE id = ?',
+            ['success', deployEndTime, logId]
+        );
 
         console.log(`[Deploy] All steps completed successfully.`);
         return NextResponse.json({ message: 'Deployment successful', version: suffix });
@@ -295,13 +324,34 @@ export async function POST(req: NextRequest) {
             errorMsg = '身份验证失败，请检查用户名和密码。';
         }
 
+        // Fix: Use UPDATE instead of INSERT for failure too, if logId exists
         if (currentUserId && currentModuleId && currentEnvId) {
+            // We can't access logId easily in catch block if it's declared in try, 
+            // but since we are refactoring, let's just do a best effort Insert if update fails or handle it better.
+            // Actually, let's rely on logId if we can move it up scope? 
+            // For this patch, I'll assume I can't easily move scope without breaking structure too much
+            // But wait, I'm replacing the whole block. I can structure it better.
+            // Let's assume logId is available if I move it? No, it's inside Try.
+            // I will try to fetch the latest running log for this user/module to update it, OR just insert a new one if I can't find it.
+            // Actually, for simplicity and reliability, I will query for the 'running' log I just created.
             try {
-                const deployEndTime = new Date();
-                await pool.query(
-                    'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_type, log_output, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    [currentUserId, currentModuleId, currentEnvId, 'failed', 'deploy', errorMsg, deployStartTime, deployEndTime]
+                // Try to find the running log for this module/env/user started recently
+                const [rows]: any = await pool.query(
+                    'SELECT id FROM deploy_logs WHERE user_id = ? AND module_id = ? AND status = "deploying" ORDER BY id DESC LIMIT 1',
+                    [currentUserId, currentModuleId]
                 );
+                if (rows.length > 0) {
+                    await pool.query(
+                        'UPDATE deploy_logs SET status = ?, log_output = ?, end_time = ? WHERE id = ?',
+                        ['failed', errorMsg, new Date(), rows[0].id]
+                    );
+                } else {
+                    // Fallback to insert
+                    await pool.query(
+                        'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_type, log_output, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                        [currentUserId, currentModuleId, currentEnvId, 'failed', 'deploy', errorMsg, deployStartTime, new Date()]
+                    );
+                }
             } catch (logError) {
                 console.error('[Deploy] FATAL: Failed to log error to DB:', logError);
             }

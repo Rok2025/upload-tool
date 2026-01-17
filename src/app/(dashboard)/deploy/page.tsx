@@ -2,8 +2,10 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { LogModal } from '@/components/LogModal';
+import { useDeployment } from '@/components/DeploymentProvider';
 
 export default function DeployPage() {
+    const { activeDeployments } = useDeployment();
     const [projects, setProjects] = useState<any[]>([]);
     const [environments, setEnvironments] = useState<any[]>([]);
     const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
@@ -69,6 +71,43 @@ export default function DeployPage() {
             [moduleId]: { ...(prev[moduleId] || { status: '', progress: 0, file: null, isUploading: false, skipRestart: false, timestamp: null, duration: null, deployed: false }), ...updates }
         }));
     };
+
+    // Sync active deployments from Global Context to Local State
+    useEffect(() => {
+        activeDeployments.forEach(deploy => {
+            // Only update if we don't have a local "uploading" state (to avoid jitter during the upload phase)
+            // Or if we are in initial load (state is empty)
+            setDeployStates(prev => {
+                const current = prev[deploy.module_id];
+                // If we already think it's uploading/deploying, we might just want to leave it
+                // BUT if we refreshed, current is undefined/empty.
+                // Or if we are "Starting distribution...", the DB says "running".
+
+                // Let's force update if it's "running" in DB and we aren't "uploading" (file upload).
+                // Actually, DB log is created at start of distribution.
+
+                if (current?.status === '正在上传...') return prev; // Don't interrupt upload progress
+
+                const startTime = new Date(deploy.start_time).toLocaleString('zh-CN', {
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', hour12: false
+                }).replace(/\//g, '-');
+
+                return {
+                    ...prev,
+                    [deploy.module_id]: {
+                        ...(current || {}),
+                        status: '正在部署中 (后台任务)',
+                        isUploading: true, // Lock buttons
+                        progress: 100, // Background tasks are "processing", so show full bar or indeterminate
+                        timestamp: startTime,
+                        deployed: false,
+                        file: current?.file || null
+                    }
+                };
+            });
+        });
+    }, [activeDeployments]);
 
     useEffect(() => {
         setIsDragging({});
@@ -488,7 +527,7 @@ export default function DeployPage() {
                                         <div className="top-actions">
                                             <button
                                                 className="action-btn deploy-trigger"
-                                                disabled={!state.file || state.isUploading || state.deployed}
+                                                disabled={!state.file || state.isUploading}
                                                 onClick={() => handleUpload(m.id)}
                                             >
                                                 {state.isUploading ? `发布中 ${state.progress}%` : (state.deployed ? '重新发布' : '立即发布')}
@@ -798,7 +837,20 @@ export default function DeployPage() {
                     left: 0;
                     right: 0;
                     background: rgba(59, 130, 246, 0.1);
-                    transition: height 0.3s;
+                    transition: width 0.3s ease;
+                }
+
+                @keyframes pulse-blue {
+                    0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+                    70% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+                    100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+                }
+
+                .module-card.uploading {
+                    border-color: #3b82f6;
+                    background: #eff6ff;
+                    animation: pulse-blue 2s infinite;
+                }                    transition: height 0.3s;
                 }
 
                 .deploy-status {
