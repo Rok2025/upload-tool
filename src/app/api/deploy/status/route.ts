@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { requireDeployPermission } from '@/lib/permissions';
+import { getSession } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
     try {
-        // 1. Auth Check (Basic) - assumes cookies are sent
-        const user = await requireDeployPermission(req, null as any);
+        // 1. Auth Check - just need to be logged in to see own status
+        const user = await getSession();
         if (!user) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }

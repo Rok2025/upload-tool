@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 
 import { DeploymentProvider } from '@/components/DeploymentProvider';
+import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 
 export default function DashboardLayout({
   children,
@@ -14,7 +15,8 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
-  const [currentUser, setCurrentUser] = useState<{ role: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ username: string; role: string } | null>(null);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -81,8 +83,14 @@ export default function DashboardLayout({
       <main className="main-content">
         <header className="top-bar">
           <div className="user-section">
-            <span className="user-info">admin</span>
-            <button className="logout-btn" onClick={handleLogout}>退出登录</button>
+            <span className="user-info">{currentUser?.username || '...'}</span>
+            <button
+              className="action-btn"
+              onClick={() => setIsChangePasswordOpen(true)}
+            >
+              修改密码
+            </button>
+            <button className="action-btn logout" onClick={handleLogout}>退出登录</button>
           </div>
         </header>
         <div className="content">
@@ -90,6 +98,10 @@ export default function DashboardLayout({
             {children}
           </DeploymentProvider>
         </div>
+        <ChangePasswordModal
+          isOpen={isChangePasswordOpen}
+          onClose={() => setIsChangePasswordOpen(false)}
+        />
       </main>
       <style jsx global>{`
         .app-container {
@@ -166,7 +178,7 @@ export default function DashboardLayout({
           color: #64748b;
           font-size: 14px;
         }
-        .logout-btn {
+        .action-btn {
           background: #f1f5f9;
           color: #64748b;
           border: none;
@@ -176,9 +188,12 @@ export default function DashboardLayout({
           cursor: pointer;
           transition: all 0.2s;
         }
-        .logout-btn:hover {
+        .action-btn:hover {
           background: #e2e8f0;
           color: #475569;
+        }
+        .action-btn.logout {
+           /* Keep same style */
         }
         .content {
           padding: 24px;
