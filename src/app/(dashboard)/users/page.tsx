@@ -144,17 +144,19 @@ export default function UsersPage() {
                                 </td>
                                 <td>{new Date(user.created_at).toLocaleDateString('zh-CN')}</td>
                                 <td>
-                                    <Link href={`/users/${user.id}/permissions`} className="text-btn">
-                                        权限
-                                    </Link>
-                                    <button type="button" className="text-btn" onClick={() => openEditModal(user)}>
-                                        编辑
-                                    </button>
-                                    {user.role !== 'admin' && (
-                                        <button type="button" className="text-btn danger" onClick={() => setDeleteConfirm(user)}>
-                                            删除
+                                    <div className="action-buttons">
+                                        <Link href={`/users/${user.id}/permissions`} className="text-btn">
+                                            权限
+                                        </Link>
+                                        <button type="button" className="text-btn" onClick={() => openEditModal(user)}>
+                                            编辑
                                         </button>
-                                    )}
+                                        {user.role !== 'admin' && (
+                                            <button type="button" className="text-btn danger" onClick={() => setDeleteConfirm(user)}>
+                                                删除
+                                            </button>
+                                        )}
+                                    </div>
                                 </td>
                             </tr>
                         ))}
@@ -259,7 +261,9 @@ export default function UsersPage() {
                 .status-badge.active { background: #d1fae5; color: #065f46; }
                 .status-badge.disabled { background: #fee2e2; color: #991b1b; }
                 
-                .text-btn { color: #2563eb; background: none; border: none; cursor: pointer; font-size: 13px; margin-right: 12px; }
+                .action-buttons { display: flex; gap: 12px; align-items: center; }
+                .text-btn { color: #2563eb; background: none; border: none; cursor: pointer; font-size: 13px; padding: 0; }
+                .text-btn:hover { text-decoration: underline; }
                 .text-btn.danger { color: #ef4444; }
                 
                 .btn-primary { background: #2563eb; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; }
