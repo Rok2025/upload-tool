@@ -135,24 +135,38 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
+            background: rgba(15, 23, 42, 0.8);
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 100001; /* Higher than sidebar */
-            backdrop-filter: blur(4px);
+            z-index: 100001;
+            backdrop-filter: blur(8px);
             animation: fadeIn 0.3s ease;
           }
 
           .modal-content {
-            background: #fff;
-            border-radius: 12px;
+            background: var(--bg-card);
+            backdrop-filter: var(--backdrop-blur);
+            border-radius: 16px;
             width: 100%;
             max-width: 450px;
-            padding: 30px;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            padding: 32px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
             animation: modalShow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            color: #334155;
+            color: var(--text-primary);
+            border: 1px solid var(--border-subtle);
+            position: relative;
+          }
+
+          .modal-content::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary), var(--accent-primary));
+            border-radius: 16px 16px 0 0;
           }
 
           @keyframes fadeIn {
@@ -161,15 +175,22 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
           }
 
           @keyframes modalShow {
-            from { opacity: 0; transform: scale(0.95); }
-            to { opacity: 1; transform: scale(1); }
+            from { opacity: 0; transform: scale(0.95) translateY(10px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
           }
 
           .modal-title {
             font-size: 20px;
             font-weight: 600;
             margin-bottom: 24px;
-            color: #1e293b;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          }
+
+          .modal-title::before {
+            content: '🔐';
           }
 
           .modal-form {
@@ -187,21 +208,27 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
           .form-group label {
             font-size: 14px;
             font-weight: 500;
-            color: #64748b;
+            color: var(--text-secondary);
           }
 
           .form-group input {
-            padding: 10px 12px;
-            border: 1px solid #e2e8f0;
-            border-radius: 6px;
+            padding: 12px 14px;
+            border: 1px solid var(--border-subtle);
+            border-radius: 8px;
             font-size: 14px;
             outline: none;
             transition: all 0.2s;
+            background: var(--bg-input);
+            color: var(--text-primary);
+          }
+
+          .form-group input::placeholder {
+            color: var(--text-muted);
           }
 
           .form-group input:focus {
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
           }
 
           .modal-footer {
@@ -213,21 +240,39 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
 
           .btn-primary, .btn-secondary {
             padding: 10px 20px;
-            border-radius: 6px;
+            border-radius: 8px;
             font-size: 14px;
             font-weight: 500;
             cursor: pointer;
             border: none;
             transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
           }
 
           .btn-primary {
-            background: #3b82f6;
+            background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
             color: white;
           }
 
+          .btn-primary::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+          }
+
+          .btn-primary:hover:not(:disabled)::after {
+            left: 100%;
+          }
+
           .btn-primary:hover:not(:disabled) {
-            background: #2563eb;
+            box-shadow: var(--shadow-glow);
+            transform: translateY(-1px);
           }
 
           .btn-primary:disabled {
@@ -236,13 +281,15 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
           }
 
           .btn-secondary {
-            background: #f1f5f9;
-            color: #64748b;
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-subtle);
           }
 
-          .btn-secondary:hover {
-            background: #e2e8f0;
-            color: #475569;
+          .btn-secondary:hover:not(:disabled) {
+            background: rgba(51, 65, 85, 0.8);
+            border-color: var(--accent-primary);
+            color: var(--text-primary);
           }
         `}</style>
             </div>

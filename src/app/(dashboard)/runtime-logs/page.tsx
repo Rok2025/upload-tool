@@ -182,10 +182,10 @@ export default function LogPage() {
 
     const getStatusColor = () => {
         switch (connectionStatus) {
-            case 'connecting': return '#fbbf24';
-            case 'connected': return '#10b981';
-            case 'error': return '#ef4444';
-            default: return '#64748b';
+            case 'connecting': return 'var(--warning)';
+            case 'connected': return 'var(--success)';
+            case 'error': return 'var(--error)';
+            default: return 'var(--text-muted)';
         }
     };
 
@@ -300,60 +300,124 @@ export default function LogPage() {
 
             <style jsx>{`
         .log-container { 
-            background: #0f172a; 
-            color: #38bdf8; 
-            border-radius: 12px; 
+            background: var(--bg-card); 
+            backdrop-filter: var(--backdrop-blur);
+            color: var(--accent-tertiary); 
+            border-radius: 16px; 
             height: 85vh; 
             display: flex; 
             flex-direction: column; 
             overflow: hidden;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            box-shadow: var(--shadow-glow);
+            border: 1px solid var(--border-subtle);
+            position: relative;
+        }
+        .log-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-tertiary), var(--accent-primary));
+            animation: scanline 3s linear infinite;
+        }
+        [data-theme="light"] .log-container::before {
+            display: none;
+        }
+        @keyframes scanline {
+            0% { opacity: 0.5; }
+            50% { opacity: 1; }
+            100% { opacity: 0.5; }
         }
         .log-header { 
             padding: 16px 24px; 
-            border-bottom: 1px solid #1e293b; 
+            border-bottom: 1px solid var(--border-subtle); 
             display: flex; 
             justify-content: space-between; 
-            align-items: center; 
+            align-items: center;
+            background: var(--bg-card);
         }
-        .log-header h2 { font-size: 18px; color: #f8fafc; margin: 0; }
+        [data-theme="dark"] .log-header {
+            background: rgba(15, 23, 42, 0.5);
+        }
+        .log-header h2 { 
+            font-size: 18px; 
+            color: var(--text-primary); 
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        [data-theme="dark"] .log-header h2::before {
+            content: '>';
+            color: var(--accent-tertiary);
+            font-family: 'Courier New', monospace;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
         
         .status-indicator {
             display: flex;
             align-items: center;
             gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg-input);
+            border-radius: 20px;
+            border: 1px solid var(--border-subtle);
+        }
+        [data-theme="dark"] .status-indicator {
+            background: rgba(30, 41, 59, 0.5);
         }
         .status-dot {
             width: 8px;
             height: 8px;
             border-radius: 50%;
             animation: pulse 2s infinite;
+            box-shadow: 0 0 8px currentColor;
         }
         @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(0.9); }
         }
         .status-text {
             font-size: 13px;
-            color: #cbd5e1;
+            color: var(--text-secondary);
+            font-family: 'Courier New', monospace;
         }
 
         .log-controls {
             padding: 16px 24px;
-            border-bottom: 1px solid #1e293b;
+            border-bottom: 1px solid var(--border-subtle);
             display: flex;
             gap: 12px;
             align-items: center;
             flex-wrap: wrap;
+            background: var(--bg-card);
+        }
+        [data-theme="dark"] .log-controls {
+            background: rgba(15, 23, 42, 0.3);
         }
         .log-controls select {
-            padding: 8px 12px;
-            border-radius: 6px;
-            border: 1px solid #334155;
-            background: #1e293b;
-            color: #e2e8f0;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border-subtle);
+            background: var(--bg-input);
+            color: var(--text-primary);
             font-size: 13px;
             min-width: 150px;
+            transition: all 0.2s;
+        }
+        .log-controls select:hover:not(:disabled) {
+            border-color: var(--accent-primary);
+        }
+        .log-controls select:focus {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+            outline: none;
         }
         .log-controls select:disabled {
             opacity: 0.5;
@@ -364,10 +428,10 @@ export default function LogPage() {
             display: flex;
             gap: 12px;
             align-items: center;
-            background: #1e293b;
-            padding: 4px 12px;
-            border-radius: 6px;
-            border: 1px solid #334155;
+            background: var(--bg-input);
+            padding: 6px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border-subtle);
             flex-wrap: wrap;
         }
         .radio-label {
@@ -376,15 +440,16 @@ export default function LogPage() {
             gap: 6px;
             cursor: pointer;
             font-size: 13px;
-            color: #94a3b8;
+            color: var(--text-muted);
             transition: color 0.2s;
+            font-family: 'Courier New', monospace;
         }
         .radio-label.active {
-            color: #38bdf8;
+            color: var(--accent-tertiary);
             font-weight: 500;
         }
         .radio-label input {
-            accent-color: #38bdf8;
+            accent-color: var(--accent-tertiary);
         }
 
         .button-group {
@@ -393,38 +458,63 @@ export default function LogPage() {
             margin-left: auto;
         }
         .btn-primary, .btn-danger, .btn-secondary {
-            padding: 8px 16px;
-            border-radius: 6px;
+            padding: 10px 20px;
+            border-radius: 8px;
             font-size: 13px;
             font-weight: 600;
             border: none;
             cursor: pointer;
             transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
         }
         .btn-primary {
-            background: #38bdf8;
-            color: #0f172a;
+            background: linear-gradient(135deg, var(--accent-tertiary), #06b6d4);
+            color: #fff;
+        }
+        [data-theme="dark"] .btn-primary {
+            color: var(--bg-primary);
+        }
+        .btn-primary::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+        .btn-primary:hover:not(:disabled)::after {
+            left: 100%;
         }
         .btn-primary:hover:not(:disabled) {
-            background: #22d3ee;
+            box-shadow: 0 0 20px rgba(34, 211, 238, 0.4);
+            transform: translateY(-1px);
         }
         .btn-primary:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
         .btn-danger {
-            background: #ef4444;
+            background: linear-gradient(135deg, var(--error), #dc2626);
             color: #fff;
         }
         .btn-danger:hover {
-            background: #dc2626;
+            box-shadow: 0 0 20px rgba(248, 113, 113, 0.4);
+            transform: translateY(-1px);
         }
         .btn-secondary {
-            background: #334155;
-            color: #e2e8f0;
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-subtle);
         }
         .btn-secondary:hover {
-            background: #475569;
+            border-color: var(--accent-primary);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .btn-secondary:hover {
+            background: rgba(51, 65, 85, 0.8);
         }
 
         .log-viewport { 
@@ -434,17 +524,39 @@ export default function LogPage() {
             font-size: 13px; 
             overflow-y: auto; 
             white-space: pre-wrap;
-            line-height: 1.6;
+            line-height: 1.8;
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%);
+        }
+        .log-viewport::-webkit-scrollbar {
+            width: 8px;
+        }
+        .log-viewport::-webkit-scrollbar-track {
+            background: rgba(30, 41, 59, 0.3);
+        }
+        .log-viewport::-webkit-scrollbar-thumb {
+            background: var(--border-subtle);
+            border-radius: 4px;
+        }
+        .log-viewport::-webkit-scrollbar-thumb:hover {
+            background: var(--accent-primary);
         }
         .log-empty {
-            color: #64748b;
+            color: var(--text-muted);
             text-align: center;
-            padding: 40px;
+            padding: 60px;
             font-size: 14px;
         }
         .log-line { 
-            margin-bottom: 4px;
+            margin-bottom: 2px;
             word-wrap: break-word;
+            padding: 2px 0;
+            border-left: 2px solid transparent;
+            padding-left: 10px;
+            transition: all 0.2s;
+        }
+        .log-line:hover {
+            background: rgba(34, 211, 238, 0.05);
+            border-left-color: var(--accent-tertiary);
         }
       `}</style>
         </div>
