@@ -71,3 +71,20 @@ CREATE TABLE IF NOT EXISTS deploy_logs (
     FOREIGN KEY (module_id) REFERENCES modules(id),
     FOREIGN KEY (environment_id) REFERENCES environments(id)
 );
+
+-- 7. Deploy Log Steps Table (Step-level progress)
+CREATE TABLE IF NOT EXISTS deploy_log_steps (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    deploy_log_id INT NOT NULL,
+    step_key VARCHAR(64) NOT NULL,
+    section ENUM('local', 'remote') NOT NULL,
+    status ENUM('pending', 'running', 'success', 'failed') NOT NULL DEFAULT 'pending',
+    message VARCHAR(255) NOT NULL,
+    order_index INT NOT NULL,
+    started_at TIMESTAMP NULL,
+    finished_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_deploy_step (deploy_log_id, step_key),
+    INDEX idx_deploy_log (deploy_log_id),
+    FOREIGN KEY (deploy_log_id) REFERENCES deploy_logs(id) ON DELETE CASCADE
+);

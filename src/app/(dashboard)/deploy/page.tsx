@@ -4,6 +4,17 @@ import { useState, useEffect, useMemo } from 'react';
 import { LogModal } from '@/components/LogModal';
 import { useDeployment } from '@/components/DeploymentProvider';
 
+interface DeployStep {
+    deploy_log_id: number;
+    step_key: string;
+    section: 'local' | 'remote';
+    status: 'pending' | 'running' | 'success' | 'failed';
+    message: string;
+    order_index: number;
+    started_at: string | null;
+    finished_at: string | null;
+}
+
 export default function DeployPage() {
     const { activeDeployments } = useDeployment();
     const [projects, setProjects] = useState<any[]>([]);
@@ -22,6 +33,41 @@ export default function DeployPage() {
         duration: number | null;
         deployed: boolean; // Prevent duplicate deployments
     }>>({});
+
+    const getStepBadge = (status: DeployStep['status']) => {
+        switch (status) {
+            case 'success':
+                return { icon: '✓', className: 'success' };
+            case 'failed':
+                return { icon: '✕', className: 'failed' };
+            case 'running':
+                return { icon: '●', className: 'running' };
+            default:
+                return { icon: '○', className: 'pending' };
+        }
+    };
+
+    const formatDuration = (seconds: number): string => {
+        if (seconds < 60) return `${seconds}秒`;
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return secs > 0 ? `${mins}分${secs}秒` : `${mins}分钟`;
+    };
+
+    const getRemoteTargetLabel = (active: any, fallbackEnvName?: string) => {
+        const envName = active?.environment_name || fallbackEnvName;
+        const host = active?.environment_host;
+        const port = active?.environment_port;
+        if (host && port) return `${envName || '目标服务器'} (${host}:${port})`;
+        return envName || '目标服务器';
+    };
+
+    // Progress detail popover (hover on desktop, click on touch)
+    const [progressPopoverModuleId, setProgressPopoverModuleId] = useState<number | null>(null);
+
+    const toggleProgressPopover = (moduleId: number) => {
+        setProgressPopoverModuleId(prev => (prev === moduleId ? null : moduleId));
+    };
 
     // Log Modal state
     const [showLogModal, setShowLogModal] = useState(false);
@@ -441,161 +487,336 @@ export default function DeployPage() {
                             const state = deployStates[m.id] || { status: '', progress: 0, file: null, isUploading: false, timestamp: null, duration: null, deployed: false, skipRestart: false };
                             const dragging = isDragging[m.id];
 
+                            const active = activeDeployments.find((d: any) => d.module_id === m.id);
+                            const steps: DeployStep[] = (active?.steps || []) as DeployStep[];
+                            const localSteps = steps.filter(s => s.section === 'local');
+                            const remoteSteps = steps.filter(s => s.section === 'remote');
+                            const showOverlay = state.isUploading || !!active;
+
+                            const remoteTargetLabel = getRemoteTargetLabel(active, selectedProject?.environment_name);
+
+                            const localSummary = (() => {
+                                if (state.status === '正在上传...') {
+                                    return { status: 'running' as const, text: '上传到部署平台', right: `${state.progress}%` };
+                                }
+                                if (localSteps.length > 0) {
+                                    const s = localSteps[localSteps.length - 1];
+                                    return { status: s.status, text: s.message, right: '' };
+                                }
+                                return { status: 'pending' as const, text: '等待选择文件', right: '' };
+                            })();
+
+                            const remoteCurrent =
+                                remoteSteps.find(s => s.status === 'running') ||
+                                remoteSteps.find(s => s.status === 'failed') ||
+                                remoteSteps[remoteSteps.length - 1];
+
+                            const remoteSummary = (() => {
+                                if (remoteCurrent) {
+                                    return { status: remoteCurrent.status, text: remoteCurrent.message };
+                                }
+                                if (state.status === '正在上传...') {
+                                    return { status: 'pending' as const, text: '等待上传完成后开始远程部署' };
+                                }
+                                return { status: 'running' as const, text: '正在发起远程部署…' };
+                            })();
+
+                            // 计算总体进度：按步骤细分权重
+                            // local.uploaded: 20%, remote.connect: 10%, remote.prepare: 10%
+                            // remote.transfer: 20%, remote.swap: 15%, remote.restart: 15%, remote.cleanup: 10%
+                            const overallProgress = (() => {
+                                const stepWeights: Record<string, { start: number; weight: number }> = {
+                                    'local.uploaded': { start: 0, weight: 20 },
+                                    'remote.connect': { start: 20, weight: 10 },
+                                    'remote.prepare': { start: 30, weight: 10 },
+                                    'remote.transfer': { start: 40, weight: 20 },
+                                    'remote.swap': { start: 60, weight: 15 },
+                                    'remote.restart': { start: 75, weight: 15 },
+                                    'remote.cleanup': { start: 90, weight: 10 },
+                                };
+
+                                // 上传阶段：0-20%
+                                if (state.status === '正在上传...') {
+                                    return Math.round(state.progress * 0.2);
+                                }
+
+                                // 查找已完成和正在进行的步骤
+                                const allSteps = [...localSteps, ...remoteSteps];
+                                let progress = 0;
+
+                                for (const step of allSteps) {
+                                    const config = stepWeights[step.step_key];
+                                    if (!config) continue;
+
+                                    if (step.status === 'success') {
+                                        progress = config.start + config.weight;
+                                    } else if (step.status === 'running') {
+                                        progress = config.start + Math.round(config.weight * 0.5);
+                                    }
+                                }
+
+                                return Math.min(progress, 100);
+                            })();
+
+                            const popoverOpen = progressPopoverModuleId === m.id;
+
                             return (
                                 <div
                                     key={m.id}
-                                    className={`module-card ${dragging ? 'dragging' : ''} ${state.isUploading ? 'uploading' : ''}`}
+                                    className={`module-card ${dragging ? 'dragging' : ''} ${state.isUploading ? 'uploading' : ''} ${popoverOpen ? 'popover-open' : ''}`}
                                     onDragOver={(e) => handleDragOver(e, m.id)}
                                     onDragLeave={(e) => handleDragLeave(e, m.id)}
                                     onDrop={(e) => handleDrop(e, m.id)}
                                 >
-                                    <div className="card-header">
-                                        <h3 className="module-title">{m.name}</h3>
-                                        <div className="status-badge">
-                                            <span className={`status-dot ${state.status.includes('成功') ? 'online' : (state.status.includes('错误') || state.status.includes('异常') ? 'offline' : (state.isUploading ? 'busy' : 'idle'))}`}></span>
-                                            <span className="status-label">
-                                                {state.isUploading ? '正在同步' : (state.status.includes('成功') ? '已上线' : '就绪')}
-                                            </span>
-                                        </div>
-                                    </div>
+                                    <div className="card-surface">
+                                        <div className="card-header">
+                                            <h3 className="module-title">{m.name}</h3>
+                                            <div
+                                                className={`status-badge ${showOverlay ? 'deploying' : ''} ${state.deployed ? 'deployed' : ''}`}
+                                                onMouseEnter={() => (showOverlay || state.deployed) && setProgressPopoverModuleId(m.id)}
+                                                onMouseLeave={() => setProgressPopoverModuleId(prev => (prev === m.id ? null : prev))}
+                                            >
+                                                <span className={`status-dot ${showOverlay ? 'deploying' : (state.deployed || state.status.includes('成功') ? 'online' : (state.status.includes('错误') || state.status.includes('异常') ? 'offline' : 'idle'))}`}></span>
+                                                <span className="status-label">
+                                                    {showOverlay ? '发布中' : (state.deployed || state.status.includes('成功') ? '已发布' : '就绪')}
+                                                </span>
 
-                                    <div className="card-body">
-                                        <div className="module-meta">
-                                            <div className="type-tag">{m.type.toUpperCase()}</div>
-                                            <div className="remote-path" title={m.remote_path}>{m.remote_path}</div>
-                                        </div>
+                                                {/* 部署中的进度弹窗 - 始终渲染 (如果正在发布)，通过 CSS 控制可见性以支持过渡动画 */}
+                                                {showOverlay && (
+                                                    <div className="status-popover" onClick={(e) => e.stopPropagation()}>
+                                                        <div className="dp-section">
+                                                            <div className="dp-title">本地处理</div>
+                                                            {state.status === '正在上传...' ? (
+                                                                <div className="dp-step">
+                                                                    <span className="dp-dot running">●</span>
+                                                                    <span className="dp-step-text">文件上传到部署平台</span>
+                                                                    <span className="dp-right">{state.progress}%</span>
+                                                                </div>
+                                                            ) : localSteps.length > 0 ? (
+                                                                localSteps.map((s) => {
+                                                                    const badge = getStepBadge(s.status);
+                                                                    return (
+                                                                        <div key={s.step_key} className="dp-step">
+                                                                            <span className={`dp-dot ${badge.className}`}>{badge.icon}</span>
+                                                                            <span className="dp-step-text">{s.message}</span>
+                                                                            <span className="dp-right"></span>
+                                                                        </div>
+                                                                    );
+                                                                })
+                                                            ) : (
+                                                                <div className="dp-step">
+                                                                    <span className="dp-dot running">●</span>
+                                                                    <span className="dp-step-text">正在准备上传…</span>
+                                                                    <span className="dp-right"></span>
+                                                                </div>
+                                                            )}
+                                                        </div>
 
-                                        <div
-                                            className={`drop-zone ${state.file ? 'has-file' : ''}`}
-                                            onClick={() => document.getElementById(`file-${m.id}`)?.click()}
-                                        >
-                                            <input
-                                                type="file"
-                                                id={`file-${m.id}`}
-                                                className="hidden-input"
-                                                accept={getAllowedExtensions(m) || undefined}
-                                                onChange={(e) => {
-                                                    const file = e.target.files?.[0];
-                                                    if (file) {
-                                                        const allowedStr = getAllowedExtensions(m);
-                                                        if (allowedStr) {
-                                                            const allowed = allowedStr.split(',').map((ext: string) => ext.trim().toLowerCase());
-                                                            const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
-                                                            const isAllowed = allowed.some((ext: string) => ext === fileExt || file.name.toLowerCase().endsWith(ext));
+                                                        <div className="dp-section">
+                                                            <div className="dp-title">远程部署</div>
+                                                            {remoteSteps.length > 0 ? (
+                                                                remoteSteps.map((s) => {
+                                                                    const badge = getStepBadge(s.status);
+                                                                    return (
+                                                                        <div key={s.step_key} className="dp-step">
+                                                                            <span className={`dp-dot ${badge.className}`}>{badge.icon}</span>
+                                                                            <span className="dp-step-text">{s.message}</span>
+                                                                            <span className="dp-right"></span>
+                                                                        </div>
+                                                                    );
+                                                                })
+                                                            ) : (
+                                                                <div className="dp-step">
+                                                                    <span className="dp-dot running">●</span>
+                                                                    <span className="dp-step-text">正在发起远程部署…</span>
+                                                                    <span className="dp-right"></span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
 
-                                                            if (!isAllowed) {
-                                                                updateModuleState(m.id, { status: `错误: 文件类型不匹配 (允许: ${allowedStr})` });
-                                                                e.target.value = ''; // Reset input
-                                                                return;
-                                                            }
-                                                        }
-                                                        updateModuleState(m.id, { file, deployed: false, status: '' });
-                                                    }
-                                                }}
-                                                disabled={state.isUploading}
-                                            />
-                                            <div className="zone-content">
-                                                <div className="icon">{state.file ? '📄' : '☁️'}</div>
-                                                <div className="text">
-                                                    {state.file ? state.file.name : '拖拽 JAR/ZIP 文件到此'}
-                                                </div>
-                                            </div>
-                                            {state.isUploading && (
-                                                <div className="progress-overlay" style={{ height: `${state.progress}%` }}></div>
-                                            )}
-                                        </div>
-
-                                        {state.status && (
-                                            <div className={`deploy-status ${state.status.includes('成功') ? 'success' : (state.status.includes('错误') || state.status.includes('异常') ? 'error' : 'info')}`}>
-                                                <div className="status-msg">
-                                                    <span className="msg-text">{state.status}</span>
-                                                    {!state.isUploading && (
-                                                        <button className="clear-minimal" onClick={() => updateModuleState(m.id, { status: '', timestamp: null, duration: null })}>✕</button>
-                                                    )}
-                                                </div>
-                                                {state.timestamp && (
-                                                    <div className="status-time">
-                                                        <span>📅 {state.timestamp}</span>
-                                                        {state.duration !== null && <span>⏱ {state.duration}s</span>}
+                                                {/* 已发布的信息弹窗 - 始终渲染 (如果已发布)，通过 CSS 控制可见性 */}
+                                                {!showOverlay && state.deployed && state.timestamp && (
+                                                    <div className="status-popover deployed-info">
+                                                        <div className="deployed-header">✓ 部署成功</div>
+                                                        <div className="deployed-detail">
+                                                            <span>📅 {state.timestamp}</span>
+                                                            {state.duration !== null && <span>⏱ {state.duration}s</span>}
+                                                        </div>
                                                     </div>
                                                 )}
                                             </div>
-                                        )}
-                                    </div>
-
-                                    <div className="card-actions">
-                                        <div className="top-actions">
-                                            <button
-                                                className="action-btn deploy-trigger"
-                                                disabled={!state.file || state.isUploading}
-                                                onClick={() => handleUpload(m.id)}
-                                            >
-                                                {state.isUploading ? `发布中 ${state.progress}%` : (state.deployed ? '重新发布' : '立即发布')}
-                                            </button>
-
-                                            {(() => {
-                                                let hasLogs = false;
-                                                if (m.log_path) {
-                                                    try {
-                                                        const p = JSON.parse(m.log_path);
-                                                        if (Array.isArray(p) ? p.length > 0 : !!p) hasLogs = true;
-                                                    } catch { hasLogs = !!m.log_path; }
-                                                }
-                                                return hasLogs && (
-                                                    <button
-                                                        className="action-btn log-btn"
-                                                        onClick={() => {
-                                                            setLogModuleId(m.id);
-                                                            setLogModuleName(m.name);
-                                                            setLogEnvironmentId(selectedProject.environment_id || null);
-
-                                                            let paths: string[] = [];
-                                                            if (m.log_path) {
-                                                                try {
-                                                                    const parsed = JSON.parse(m.log_path);
-                                                                    if (Array.isArray(parsed)) paths = parsed;
-                                                                    else paths = [m.log_path];
-                                                                } catch (e) {
-                                                                    paths = [m.log_path];
-                                                                }
-                                                            }
-                                                            setLogPaths(paths);
-
-                                                            setShowLogModal(true);
-                                                        }}
-                                                    >
-                                                        📋 查看日志
-                                                    </button>
-                                                );
-                                            })()}
                                         </div>
-                                        <div className="bottom-actions">
-                                            <div className="control-group">
-                                                <button
-                                                    className="control-btn stop"
-                                                    onClick={() => handleManualStop(m.id)}
-                                                    disabled={state.isUploading}
-                                                >
-                                                    ⏹ 停止
-                                                </button>
-                                                <button
-                                                    className="control-btn restart"
-                                                    onClick={() => handleManualRestart(m.id)}
-                                                    disabled={state.isUploading}
-                                                >
-                                                    🔄 重启
-                                                </button>
+
+                                        <div className="card-body">
+                                            <div className="module-meta">
+                                                <div className="type-tag">{m.type.toUpperCase()}</div>
+                                                <div className="remote-path" title={m.remote_path}>{m.remote_path}</div>
                                             </div>
-                                            <label className="checkbox-mini">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={state.skipRestart}
-                                                    onChange={(e) => updateModuleState(m.id, { skipRestart: e.target.checked })}
-                                                />
-                                                跳过重启
-                                            </label>
+
+                                            <div className="drop-zone-wrap">
+                                                <div
+                                                    className={`drop-zone ${state.file ? 'has-file' : ''} ${showOverlay ? 'locked' : ''}`}
+                                                    onClick={() => {
+                                                        if (showOverlay) return;
+                                                        document.getElementById(`file-${m.id}`)?.click();
+                                                    }}
+                                                >
+                                                    <input
+                                                        type="file"
+                                                        id={`file-${m.id}`}
+                                                        className="hidden-input"
+                                                        accept={getAllowedExtensions(m) || undefined}
+                                                        onChange={(e) => {
+                                                            const file = e.target.files?.[0];
+                                                            if (file) {
+                                                                const allowedStr = getAllowedExtensions(m);
+                                                                if (allowedStr) {
+                                                                    const allowed = allowedStr.split(',').map((ext: string) => ext.trim().toLowerCase());
+                                                                    const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
+                                                                    const isAllowed = allowed.some((ext: string) => ext === fileExt || file.name.toLowerCase().endsWith(ext));
+
+                                                                    if (!isAllowed) {
+                                                                        updateModuleState(m.id, { status: `错误: 文件类型不匹配 (允许: ${allowedStr})` });
+                                                                        e.target.value = ''; // Reset input
+                                                                        return;
+                                                                    }
+                                                                }
+                                                                updateModuleState(m.id, { file, deployed: false, status: '' });
+                                                            }
+                                                        }}
+                                                        disabled={state.isUploading}
+                                                    />
+                                                    <div className="zone-content">
+                                                        <div className="icon">{state.file ? '📄' : '☁️'}</div>
+                                                        <div className="text">
+                                                            {state.file ? state.file.name : '拖拽 JAR/ZIP 文件到此'}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* 发布成功后的状态覆盖层 */}
+                                                {state.status.includes('成功') && !state.isUploading && (
+                                                    <div className="deploy-success-overlay">
+                                                        <button className="clear-overlay" onClick={() => updateModuleState(m.id, { status: '', timestamp: null, duration: null })}>✕</button>
+                                                        <div className="success-content">
+                                                            <span className="success-icon">✓</span>
+                                                            <span className="success-text">发布成功</span>
+                                                            <span className="success-divider">·</span>
+                                                            <span className="success-time">{state.timestamp}</span>
+                                                            {state.duration !== null && (
+                                                                <>
+                                                                    <span className="success-divider">·</span>
+                                                                    <span className="success-duration">耗时 {formatDuration(state.duration)}</span>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* 错误状态显示 */}
+                                            {state.status && !state.status.includes('成功') && !state.isUploading && (state.status.includes('错误') || state.status.includes('异常') || state.status.includes('失败')) && (
+                                                <div className="deploy-status error">
+                                                    <div className="status-msg">
+                                                        <span className="msg-text">{state.status}</span>
+                                                        <button className="clear-minimal" onClick={() => updateModuleState(m.id, { status: '', timestamp: null, duration: null })}>✕</button>
+                                                    </div>
+                                                    {state.timestamp && (
+                                                        <div className="status-time">
+                                                            <span>📅 {state.timestamp}</span>
+                                                            {state.duration !== null && <span>⏱ {state.duration}s</span>}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                        </div>
+
+                                        <div className="card-actions">
+                                            <div className="top-actions">
+                                                <div
+                                                    className="deploy-btn-wrapper"
+                                                    onMouseEnter={() => showOverlay && setProgressPopoverModuleId(m.id)}
+                                                    onMouseLeave={() => setProgressPopoverModuleId(null)}
+                                                >
+                                                    <button
+                                                        className="action-btn deploy-trigger"
+                                                        disabled={!state.file || state.isUploading || !!active}
+                                                        onClick={() => handleUpload(m.id)}
+                                                    >
+                                                        {showOverlay ? `发布中 ${overallProgress}%` : (state.deployed ? '重新发布' : '立即发布')}
+                                                    </button>
+                                                </div>
+
+                                                {(() => {
+                                                    let hasLogs = false;
+                                                    if (m.log_path) {
+                                                        try {
+                                                            const p = JSON.parse(m.log_path);
+                                                            if (Array.isArray(p) ? p.length > 0 : !!p) hasLogs = true;
+                                                        } catch { hasLogs = !!m.log_path; }
+                                                    }
+                                                    return hasLogs && (
+                                                        <button
+                                                            className="action-btn log-btn"
+                                                            onClick={() => {
+                                                                setLogModuleId(m.id);
+                                                                setLogModuleName(m.name);
+                                                                setLogEnvironmentId(selectedProject.environment_id || null);
+
+                                                                let paths: string[] = [];
+                                                                if (m.log_path) {
+                                                                    try {
+                                                                        const parsed = JSON.parse(m.log_path);
+                                                                        if (Array.isArray(parsed)) paths = parsed;
+                                                                        else paths = [m.log_path];
+                                                                    } catch (e) {
+                                                                        paths = [m.log_path];
+                                                                    }
+                                                                }
+                                                                setLogPaths(paths);
+
+                                                                setShowLogModal(true);
+                                                            }}
+                                                        >
+                                                            📋 查看日志
+                                                        </button>
+                                                    );
+                                                })()}
+                                            </div>
+                                            <div className="bottom-actions">
+                                                <div className="control-group">
+                                                    <button
+                                                        className="control-btn stop"
+                                                        onClick={() => handleManualStop(m.id)}
+                                                        disabled={state.isUploading}
+                                                    >
+                                                        ⏹ 停止
+                                                    </button>
+                                                    <button
+                                                        className="control-btn restart"
+                                                        onClick={() => handleManualRestart(m.id)}
+                                                        disabled={state.isUploading}
+                                                    >
+                                                        🔄 重启
+                                                    </button>
+                                                </div>
+                                                {/* 跳过重启功能暂时隐藏
+                                                <label className="checkbox-mini">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={state.skipRestart}
+                                                        onChange={(e) => updateModuleState(m.id, { skipRestart: e.target.checked })}
+                                                    />
+                                                    跳过重启
+                                                </label>
+                                                */}
+                                            </div>
                                         </div>
                                     </div>
+
                                 </div>
 
                             );
@@ -750,8 +971,15 @@ export default function DeployPage() {
                 .module-grid {
                     padding: 32px;
                     display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
                     gap: 24px;
+                    align-items: start;
+                }
+                @media (max-width: 1280px) {
+                    .module-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                }
+                @media (max-width: 900px) {
+                    .module-grid { grid-template-columns: 1fr; }
                 }
 
                 .module-card {
@@ -762,9 +990,216 @@ export default function DeployPage() {
                     border: 1px solid var(--border-subtle);
                     display: flex;
                     flex-direction: column;
-                    gap: 16px;
+                    gap: 20px;
                     transition: all 0.3s ease;
                     position: relative;
+                    overflow: visible;
+                    margin-top: 14px;
+                }
+                .module-card.popover-open {
+                    z-index: 20;
+                }
+
+                .card-surface {
+                    position: relative;
+                }
+
+                .drop-zone-wrap {
+                    position: relative;
+                }
+
+                .drop-zone.locked {
+                    cursor: default;
+                }
+
+                .drop-progress {
+                    position: absolute;
+                    inset: 0;
+                    z-index: 4;
+                    border-radius: 10px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 10px;
+                    background: rgba(15, 23, 42, 0.10);
+                    backdrop-filter: blur(2px);
+                }
+                .module-card.popover-open .drop-progress {
+                    z-index: 30;
+                }
+                [data-theme="dark"] .drop-progress {
+                    background: rgba(0, 0, 0, 0.45);
+                    backdrop-filter: blur(6px);
+                }
+                .dp-layer {
+                    width: 100%;
+                    border-radius: 10px;
+                    background: var(--bg-card-solid);
+                    border: 1px solid var(--border-subtle);
+                    padding: 10px;
+                    box-shadow: 0 18px 36px -18px rgba(0, 0, 0, 0.45);
+                    color: var(--text-primary);
+                }
+                .dp-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 6px 8px;
+                    border-radius: 8px;
+                    background: rgba(255, 255, 255, 0.04);
+                    border: 1px solid var(--border-light);
+                }
+                [data-theme="light"] .dp-row {
+                    background: rgba(15, 23, 42, 0.02);
+                }
+                .dp-dot {
+                    width: 18px;
+                    height: 18px;
+                    border-radius: 6px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 12px;
+                    font-weight: 900;
+                    flex-shrink: 0;
+                }
+                .dp-dot.pending {
+                    color: var(--text-muted);
+                    background: rgba(100, 116, 139, 0.12);
+                }
+                .dp-dot.running {
+                    color: var(--warning);
+                    background: rgba(250, 204, 21, 0.12);
+                    animation: breathe 1.2s ease-in-out infinite;
+                }
+                .dp-dot.success {
+                    color: var(--success);
+                    background: rgba(74, 222, 128, 0.12);
+                }
+                .dp-dot.failed {
+                    color: var(--error);
+                    background: rgba(248, 113, 113, 0.12);
+                }
+                @keyframes breathe {
+                    0%, 100% { transform: scale(1); opacity: 1; }
+                    50% { transform: scale(0.92); opacity: 0.6; }
+                }
+                .dp-label {
+                    font-size: 11px;
+                    font-weight: 900;
+                    color: var(--text-muted);
+                    width: 34px;
+                    flex-shrink: 0;
+                    letter-spacing: 0.06em;
+                    text-transform: uppercase;
+                }
+                .dp-text {
+                    font-size: 12px;
+                    font-weight: 800;
+                    color: var(--text-primary);
+                    flex: 1;
+                    min-width: 0;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .dp-hint {
+                    margin-top: 8px;
+                    font-size: 10px;
+                    color: var(--text-muted);
+                    display: none;
+                    user-select: none;
+                }
+                @media (hover: hover) and (pointer: fine) {
+                    .dp-hint { display: block; }
+                    .dp-hint::before { content: '悬停查看全部进度'; }
+                }
+                @media (hover: none) and (pointer: coarse) {
+                    .dp-hint { display: block; }
+                    .dp-hint::before { content: '点击查看全部进度'; }
+                }
+
+                .dp-popover {
+                    position: absolute;
+                    left: 0;
+                    right: 0;
+                    bottom: calc(100% + 10px);
+                    border-radius: 12px;
+                    background: var(--bg-card-solid);
+                    border: 1px solid var(--border-subtle);
+                    padding: 12px;
+                    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
+                    backdrop-filter: var(--backdrop-blur);
+                    opacity: 0;
+                    transform: translateY(6px);
+                    pointer-events: none;
+                    transition: all 0.16s ease;
+                    max-height: 360px;
+                    overflow: auto;
+                    z-index: 10;
+                }
+                .dp-popover::-webkit-scrollbar { width: 8px; }
+                .dp-popover::-webkit-scrollbar-track { background: rgba(30, 41, 59, 0.15); }
+                .dp-popover::-webkit-scrollbar-thumb {
+                    background: var(--border-subtle);
+                    border-radius: 6px;
+                }
+                .dp-popover::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
+
+                @media (hover: hover) and (pointer: fine) {
+                    .drop-progress:hover .dp-popover {
+                        opacity: 1;
+                        transform: translateY(0);
+                        pointer-events: auto;
+                    }
+                }
+                .drop-progress.open .dp-popover,
+                .module-card.popover-open .status-popover {
+                    opacity: 1;
+                    transform: translateY(0);
+                    pointer-events: auto;
+                    visibility: visible;
+                }
+
+                .dp-section {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                    margin-bottom: 12px;
+                }
+                .dp-section:last-child { margin-bottom: 0; }
+                .dp-title {
+                    font-size: 11px;
+                    font-weight: 900;
+                    color: var(--text-muted);
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                }
+                .dp-step {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 8px 10px;
+                    border-radius: 10px;
+                    background: var(--bg-input);
+                    border: 1px solid var(--border-subtle);
+                }
+                .dp-step-text {
+                    font-size: 12px;
+                    font-weight: 800;
+                    color: var(--text-primary);
+                    flex: 1;
+                    min-width: 0;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .dp-right {
+                    font-size: 12px;
+                    font-weight: 900;
+                    color: var(--text-secondary);
+                    flex-shrink: 0;
+                    font-variant-numeric: tabular-nums;
                 }
                 [data-theme="dark"] .module-card::before {
                     content: '';
@@ -819,6 +1254,7 @@ export default function DeployPage() {
                     background: rgba(255, 255, 255, 0.05);
                     border-radius: 20px;
                     border: 1px solid var(--border-light);
+                    position: relative;
                 }
                 .status-dot { width: 6px; height: 6px; border-radius: 50%; }
                 .status-dot.online { background: var(--success); box-shadow: 0 0 8px var(--success); }
@@ -826,6 +1262,138 @@ export default function DeployPage() {
                 .status-dot.busy { background: var(--warning); animation: pulse 1.5s infinite; }
                 .status-dot.idle { background: var(--text-muted); }
                 .status-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+                
+                /* 部署中状态 */
+                .status-badge.deploying {
+                    background: rgba(250, 204, 21, 0.15);
+                    border-color: rgba(250, 204, 21, 0.3);
+                    cursor: pointer;
+                }
+                .status-badge.deploying .status-label {
+                    color: var(--warning);
+                }
+                .status-dot.deploying {
+                    background: var(--warning);
+                    animation: pulse 1.5s infinite;
+                }
+                
+                /* 已发布状态 */
+                .status-badge.deployed {
+                    background: rgba(74, 222, 128, 0.15);
+                    border-color: rgba(74, 222, 128, 0.3);
+                    cursor: pointer;
+                }
+                .status-badge.deployed .status-label {
+                    color: var(--success);
+                }
+                
+                /* 状态弹窗 */
+                .status-popover {
+                    position: absolute;
+                    top: calc(100% + 8px);
+                    right: 0;
+                    min-width: 280px;
+                    max-width: 360px;
+                    border-radius: 12px;
+                    background: var(--bg-card-solid);
+                    border: 1px solid var(--border-subtle);
+                    padding: 12px;
+                    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.55);
+                    backdrop-filter: var(--backdrop-blur);
+                    z-index: 100;
+
+                    /* Animation State */
+                    opacity: 0;
+                    transform: translateY(8px);
+                    visibility: hidden;
+                    pointer-events: none;
+                    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+                }
+                .status-popover.deployed-info {
+                    min-width: 200px;
+                }
+                .deployed-header {
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: var(--success);
+                    margin-bottom: 8px;
+                }
+                .deployed-detail {
+                    display: flex;
+                    gap: 12px;
+                    font-size: 12px;
+                    color: var(--text-muted);
+                }
+                
+                /* 部署成功覆盖层 - 使用系统主色调 */
+                .deploy-success-overlay {
+                    position: absolute;
+                    inset: 0;
+                    border-radius: 10px;
+                    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 5;
+                }
+                :global([data-theme="dark"]) .deploy-success-overlay {
+                    background: linear-gradient(135deg, #065f46 0%, #064e3b 100%);
+                    border: 1px solid rgba(74, 222, 128, 0.3);
+                }
+                .success-content {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    color: #fff;
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+                .success-icon {
+                    font-size: 14px;
+                    font-weight: 900;
+                    background: rgba(255, 255, 255, 0.25);
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                :global([data-theme="dark"]) .success-icon {
+                    background: rgba(255, 255, 255, 0.2);
+                    color: #4ade80;
+                }
+                .success-text {
+                    font-weight: 700;
+                }
+                .success-divider {
+                    opacity: 0.5;
+                }
+                .success-time,
+                .success-duration {
+                    opacity: 0.9;
+                    font-weight: 500;
+                }
+                .clear-overlay {
+                    position: absolute;
+                    top: 6px;
+                    right: 6px;
+                    background: rgba(0, 0, 0, 0.3);
+                    border: none;
+                    color: #fff;
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 50%;
+                    cursor: pointer;
+                    font-size: 12px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: background 0.2s;
+                }
+                .clear-overlay:hover {
+                    background: rgba(0, 0, 0, 0.5);
+                }
 
                 .card-body {
                     display: flex;
@@ -857,7 +1425,10 @@ export default function DeployPage() {
 
                 .drop-zone {
                     height: 80px;
-                    border: 2px dashed var(--border-subtle);
+                    border: 2px dashed rgba(99, 102, 241, 0.35);
+                }
+                :global([data-theme="light"]) .drop-zone {
+                    border: 2px dashed #cbd5e1;
                     border-radius: 10px;
                     display: flex;
                     align-items: center;
@@ -916,11 +1487,14 @@ export default function DeployPage() {
 
                 .status-time { font-size: 11px; color: var(--text-muted); display: flex; gap: 12px; }
 
+
+
                 .card-actions {
                     display: flex;
                     flex-direction: column;
                     gap: 12px;
                     margin-top: auto;
+                    padding-top: 12px;
                 }
                 .top-actions {
                     display: grid;
@@ -940,11 +1514,16 @@ export default function DeployPage() {
                     justify-content: center;
                     gap: 6px;
                 }
+                .deploy-btn-wrapper {
+                    display: flex;
+                    width: 100%;
+                }
                 .deploy-trigger {
                     background: var(--accent-gradient);
                     color: #fff;
                     position: relative;
                     overflow: hidden;
+                    width: 100%;
                 }
                 .deploy-trigger::after {
                     content: '';
@@ -962,16 +1541,30 @@ export default function DeployPage() {
                     box-shadow: 0 5px 20px -5px rgba(99, 102, 241, 0.5);
                 }
                 .deploy-trigger:disabled { 
-                    background: rgba(255, 255, 255, 0.1); 
-                    color: var(--text-muted); 
+                    background: #e2e8f0; 
+                    color: #94a3b8; 
                     cursor: not-allowed; 
+                }
+                :global([data-theme="dark"]) .deploy-trigger:disabled {
+                    background: rgba(255, 255, 255, 0.08);
+                    color: var(--text-muted);
                 }
 
                 .log-btn {
-                    background: linear-gradient(135deg, #f59e0b, #d97706);
+                    background: linear-gradient(135deg, #b45309, #92400e);
                     color: #fff;
                 }
-                .log-btn:hover { box-shadow: 0 5px 20px -5px rgba(245, 158, 11, 0.5); }
+                :global([data-theme="light"]) .log-btn {
+                    background: linear-gradient(135deg, #f59e0b, #d97706);
+                }
+                .log-btn:hover { 
+                    box-shadow: 0 5px 20px -5px rgba(180, 83, 9, 0.5); 
+                    background: linear-gradient(135deg, #c2540f, #a3520d);
+                }
+                :global([data-theme="light"]) .log-btn:hover {
+                    box-shadow: 0 5px 20px -5px rgba(245, 158, 11, 0.5);
+                    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+                }
 
                 .bottom-actions {
                     display: flex;
@@ -992,11 +1585,15 @@ export default function DeployPage() {
                     transition: all 0.2s;
                 }
                 .control-btn.stop {
-                    border: 1px solid rgba(248, 113, 113, 0.3);
-                    color: var(--error);
+                    border: 1px solid var(--border-subtle);
+                    color: var(--text-secondary);
+                }
+                :global([data-theme="light"]) .control-btn.stop {
+                    border: 1px solid #94a3b8;
                 }
                 .control-btn.stop:hover:not(:disabled) {
-                    background: rgba(248, 113, 113, 0.1);
+                    background: rgba(100, 116, 139, 0.1);
+                    border-color: var(--text-muted);
                 }
                 .control-btn.restart {
                     border: 1px solid rgba(99, 102, 241, 0.3);

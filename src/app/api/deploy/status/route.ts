@@ -26,7 +26,9 @@ export async function GET(req: NextRequest) {
                 l.end_time,
                 m.name as module_name,
                 p.name as project_name,
-                e.name as environment_name
+                e.name as environment_name,
+                e.host as environment_host,
+                e.port as environment_port
             FROM deploy_logs l
             JOIN modules m ON l.module_id = m.id
             JOIN projects p ON m.project_id = p.id
@@ -41,7 +43,42 @@ export async function GET(req: NextRequest) {
             ORDER BY l.id DESC
         `, [user.id]);
 
-        return NextResponse.json(rows);
+        const deployLogIds = rows.map((r: any) => r.id);
+        let stepsByLogId: Record<number, any[]> = {};
+
+        if (deployLogIds.length > 0) {
+            const [stepRows]: any = await pool.query(
+                `
+                SELECT 
+                    deploy_log_id,
+                    step_key,
+                    section,
+                    status,
+                    message,
+                    order_index,
+                    started_at,
+                    finished_at
+                FROM deploy_log_steps
+                WHERE deploy_log_id IN (${deployLogIds.map(() => '?').join(',')})
+                ORDER BY deploy_log_id DESC, order_index ASC
+                `,
+                deployLogIds
+            );
+
+            stepsByLogId = stepRows.reduce((acc: Record<number, any[]>, s: any) => {
+                const id = s.deploy_log_id;
+                if (!acc[id]) acc[id] = [];
+                acc[id].push(s);
+                return acc;
+            }, {});
+        }
+
+        const result = rows.map((r: any) => ({
+            ...r,
+            steps: stepsByLogId[r.id] || []
+        }));
+
+        return NextResponse.json(result);
     } catch (error: any) {
         console.error('[DeployStatus] Error fetching status:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });

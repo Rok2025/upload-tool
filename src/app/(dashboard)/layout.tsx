@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 
 import { DeploymentProvider } from '@/components/DeploymentProvider';
 import { ChangePasswordModal } from '@/components/ChangePasswordModal';
+import { ChangelogModal } from '@/components/ChangelogModal';
 import { useTheme } from '@/components/ThemeProvider';
 
 function SidebarLogo() {
@@ -75,6 +76,7 @@ export default function DashboardLayout({
   const [mounted, setMounted] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ username: string; role: string } | null>(null);
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+  const [isChangelogOpen, setIsChangelogOpen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -139,7 +141,10 @@ export default function DashboardLayout({
           </ul>
         </nav>
         <div className="sidebar-footer">
-          © 2026 中科金审科技
+          <button className="version-btn" onClick={() => setIsChangelogOpen(true)}>
+            v1.1.0
+          </button>
+          <div className="copyright">© 2026 中科金审科技</div>
         </div>
       </aside>
       <main className="main-content">
@@ -168,6 +173,10 @@ export default function DashboardLayout({
         <ChangePasswordModal
           isOpen={isChangePasswordOpen}
           onClose={() => setIsChangePasswordOpen(false)}
+        />
+        <ChangelogModal
+          isOpen={isChangelogOpen}
+          onClose={() => setIsChangelogOpen(false)}
         />
       </main>
       <style jsx global>{`
@@ -264,6 +273,33 @@ export default function DashboardLayout({
           text-align: center;
           border-top: 1px solid var(--border-subtle);
           margin-top: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .version-btn {
+          background: var(--bg-input);
+          border: 1px solid var(--border-subtle);
+          color: var(--accent-primary);
+          padding: 6px 12px;
+          border-radius: 6px;
+          font-size: 12px;
+          font-weight: 600;
+          font-family: monospace;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .version-btn:hover {
+          background: var(--accent-primary);
+          color: #fff;
+          border-color: var(--accent-primary);
+        }
+        [data-theme="dark"] .version-btn:hover {
+          box-shadow: var(--shadow-glow);
+        }
+        .copyright {
+          font-size: 11px;
+          color: var(--text-muted);
         }
         .main-content {
           flex: 1;

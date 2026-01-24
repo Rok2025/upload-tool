@@ -13,6 +13,74 @@ export async function POST(req: NextRequest) {
     let currentEnvId: any = null;
     const deployStartTime = new Date();
 
+    let logId: number | null = null;
+
+    const ensureStepsInitialized = async (connection: any, deployLogId: number, environmentName?: string) => {
+        const steps = [
+            { step_key: 'local.uploaded', section: 'local', order_index: 10, message: '文件已上传到部署平台' },
+            { step_key: 'remote.connect', section: 'remote', order_index: 20, message: `连接目标服务器${environmentName ? ` (${environmentName})` : ''}` },
+            { step_key: 'remote.prepare', section: 'remote', order_index: 30, message: '准备远程目录与环境' },
+            { step_key: 'remote.transfer', section: 'remote', order_index: 40, message: '传输文件到目标服务器' },
+            { step_key: 'remote.swap', section: 'remote', order_index: 50, message: '备份并替换旧文件' },
+            { step_key: 'remote.restart', section: 'remote', order_index: 60, message: '执行重启命令' },
+            { step_key: 'remote.cleanup', section: 'remote', order_index: 70, message: '清理历史备份' },
+        ];
+
+        for (const s of steps) {
+            await connection.query(
+                `
+                INSERT INTO deploy_log_steps (deploy_log_id, step_key, section, status, message, order_index)
+                VALUES (?, ?, ?, 'pending', ?, ?)
+                ON DUPLICATE KEY UPDATE message = VALUES(message)
+                `,
+                [deployLogId, s.step_key, s.section, s.message, s.order_index]
+            );
+        }
+
+        // Local upload is already finished by the time /api/deploy is called.
+        await connection.query(
+            `
+            UPDATE deploy_log_steps
+            SET status = 'success', started_at = COALESCE(started_at, NOW()), finished_at = COALESCE(finished_at, NOW())
+            WHERE deploy_log_id = ? AND step_key = 'local.uploaded'
+            `,
+            [deployLogId]
+        );
+    };
+
+    const stepStart = async (connection: any, deployLogId: number, stepKey: string, message?: string) => {
+        await connection.query(
+            `
+            UPDATE deploy_log_steps
+            SET status = 'running', started_at = COALESCE(started_at, NOW()), message = COALESCE(?, message)
+            WHERE deploy_log_id = ? AND step_key = ?
+            `,
+            [message ?? null, deployLogId, stepKey]
+        );
+    };
+
+    const stepSuccess = async (connection: any, deployLogId: number, stepKey: string, message?: string) => {
+        await connection.query(
+            `
+            UPDATE deploy_log_steps
+            SET status = 'success', finished_at = NOW(), message = COALESCE(?, message)
+            WHERE deploy_log_id = ? AND step_key = ?
+            `,
+            [message ?? null, deployLogId, stepKey]
+        );
+    };
+
+    const stepFail = async (connection: any, deployLogId: number, stepKey: string, message?: string) => {
+        await connection.query(
+            `
+            UPDATE deploy_log_steps
+            SET status = 'failed', finished_at = NOW(), message = COALESCE(?, message)
+            WHERE deploy_log_id = ? AND step_key = ?
+            `,
+            [message ?? null, deployLogId, stepKey]
+        );
+    };
+
     try {
         const body = await req.json();
         const { moduleId: bodyModuleId, environmentId: bodyEnvironmentId, fileName, skipRestart } = body;
@@ -36,7 +104,7 @@ export async function POST(req: NextRequest) {
             'INSERT INTO deploy_logs (user_id, module_id, environment_id, status, log_type, version, start_time) VALUES (?, ?, ?, ?, ?, ?, ?)',
             [currentUserId, currentModuleId, currentEnvId, 'deploying', 'deploy', 'pending', deployStartTime] // version pending until generated
         );
-        const logId = initResult.insertId;
+        logId = initResult.insertId;
         console.log(`[Deploy] Log record created with ID: ${logId}`);
 
         // 3. Fetch Module & Environment Info
@@ -127,6 +195,13 @@ export async function POST(req: NextRequest) {
         const env = envRow[0];
         console.log(`[Deploy] Connecting to server: ${env.host}:${env.port} as ${env.username}`);
 
+        // Initialize step rows (best effort)
+        try {
+            await ensureStepsInitialized(pool, logId!, env.name);
+        } catch (e) {
+            console.warn('[Deploy] Failed to initialize deploy_log_steps (non-fatal):', e);
+        }
+
         const password = decrypt(env.password_encrypted);
         const uploadDir = path.resolve(process.cwd(), process.env.UPLOAD_DIR || './uploads/tmp');
         const localFilePath = path.join(uploadDir, fileName);
@@ -149,6 +224,11 @@ export async function POST(req: NextRequest) {
             throw new Error(msg);
         }
 
+        // Remote: connect
+        try {
+            await stepStart(pool, logId!, 'remote.connect', `连接目标服务器 (${env.host}:${env.port})`);
+        } catch { }
+
         await ssh.connect({
             host: env.host,
             port: env.port,
@@ -156,6 +236,10 @@ export async function POST(req: NextRequest) {
             password: password
         });
         console.log(`[Deploy] SSH Connected.`);
+
+        try {
+            await stepSuccess(pool, logId!, 'remote.connect', `已连接 (${env.host}:${env.port})`);
+        } catch { }
 
         // 3. OS Detection
         console.log(`[Deploy] Detecting Target OS...`);
@@ -174,6 +258,11 @@ export async function POST(req: NextRequest) {
             console.warn(`[Deploy] OS detection failed, defaulting to Linux. Error: ${e}`);
         }
         console.log(`[Deploy] Detected OS: ${osType}`);
+
+        // Remote: prepare
+        try {
+            await stepStart(pool, logId!, 'remote.prepare', `准备远程目录与环境 (${osType})`);
+        } catch { }
 
         // Generate Suffix: YYMMDDHHmm
         const now = new Date();
@@ -204,8 +293,26 @@ export async function POST(req: NextRequest) {
         }
         console.log(`[Deploy] Remote directories ready.`);
 
+        try {
+            await stepSuccess(pool, logId!, 'remote.prepare', '远程目录就绪');
+        } catch { }
+
+        // Remote: transfer
+        try {
+            await stepStart(pool, logId!, 'remote.transfer', `传输文件到目标服务器: ${fileName}`);
+        } catch { }
+
         console.log(`[Deploy] Uploading ${isZip ? 'ZIP ' : ''}package: ${localFilePath} -> ${uploadDestPath}`);
         await ssh.putFile(localFilePath, uploadDestPath);
+
+        try {
+            await stepSuccess(pool, logId!, 'remote.transfer', '文件传输完成');
+        } catch { }
+
+        // Remote: swap
+        try {
+            await stepStart(pool, logId!, 'remote.swap');
+        } catch { }
 
         if (isZip) {
             console.log(`[Deploy] ZIP package detected, performing backup and unzip...`);
@@ -222,6 +329,9 @@ export async function POST(req: NextRequest) {
 
             const restartCmd = effectiveRestartCommand || effectiveStartCommand;
             if (restartCmd && !skipRestart) {
+                try {
+                    await stepStart(pool, logId!, 'remote.restart');
+                } catch { }
                 console.log(`[Deploy] Running restart/start command in ${parentDir}: ${restartCmd}`);
                 const fullRestartCmd = `cd "${parentDir}" && ${restartCmd}`;
                 const restartResult = await ssh.exec(fullRestartCmd);
@@ -229,11 +339,26 @@ export async function POST(req: NextRequest) {
                 if (restartResult.stderr) {
                     console.warn(`[Deploy] Restart command stderr:`, restartResult.stderr);
                 }
+
+                try {
+                    await stepSuccess(pool, logId!, 'remote.restart', '重启命令执行完成');
+                } catch { }
             } else if (!restartCmd) {
                 console.warn(`[Deploy] No restart command configured for this module.`);
+                try {
+                    await stepSuccess(pool, logId!, 'remote.restart', '未配置重启命令，跳过');
+                } catch { }
             } else if (skipRestart) {
                 console.log(`[Deploy] Skip Restart requested by user.`);
+                try {
+                    await stepSuccess(pool, logId!, 'remote.restart', '用户选择跳过重启');
+                } catch { }
             }
+
+            // ZIP 部署通常没有独立的"清理历史备份"步骤（备份为目录打包，策略不同），这里标记为跳过。
+            try {
+                await stepSuccess(pool, logId!, 'remote.cleanup', '该发布类型无需清理，跳过');
+            } catch { }
         } else if (osType === 'linux') {
             console.log(`[Deploy] Using Linux Seamless Swap Strategy...`);
             // Swap files (Linux supports renaming even if active)
@@ -242,6 +367,9 @@ export async function POST(req: NextRequest) {
 
             const restartCmd = effectiveRestartCommand || effectiveStartCommand;
             if (restartCmd && !skipRestart) {
+                try {
+                    await stepStart(pool, logId!, 'remote.restart');
+                } catch { }
                 console.log(`[Deploy] Running Linux restart/start command in ${effectiveRemotePath}: ${restartCmd}`);
                 const fullRestartCmd = `cd "${effectiveRemotePath}" && ${restartCmd}`;
                 const restartResult = await ssh.exec(fullRestartCmd);
@@ -249,16 +377,33 @@ export async function POST(req: NextRequest) {
                 if (restartResult.stderr) {
                     console.warn(`[Deploy] Restart command stderr:`, restartResult.stderr);
                 }
+
+                try {
+                    await stepSuccess(pool, logId!, 'remote.restart', '重启命令执行完成');
+                } catch { }
             } else if (!restartCmd) {
                 console.warn(`[Deploy] No restart command configured for this module.`);
+                try {
+                    await stepSuccess(pool, logId!, 'remote.restart', '未配置重启命令，跳过');
+                } catch { }
             } else if (skipRestart) {
                 console.log(`[Deploy] Skip Restart requested by user.`);
+                try {
+                    await stepSuccess(pool, logId!, 'remote.restart', '用户选择跳过重启');
+                } catch { }
             }
 
             console.log(`[Deploy] Cleaning up old versions (Keep latest 3)...`);
+            try {
+                await stepStart(pool, logId!, 'remote.cleanup');
+            } catch { }
             // List backups, exclude active, skip top 3, delete the rest
             const remoteFileName = path.basename(remoteDestPath);
             await ssh.exec(`cd "${backupDir}" && ls -1t ${basename}*${ext} | grep -v "^${remoteFileName}$" | tail -n +4 | xargs rm -f`);
+
+            try {
+                await stepSuccess(pool, logId!, 'remote.cleanup', '清理完成（保留最近 3 个）');
+            } catch { }
 
         } else {
             console.log(`[Deploy] Using Windows Stop-Replace Strategy...`);
@@ -279,6 +424,9 @@ export async function POST(req: NextRequest) {
 
             const restartCmd = effectiveRestartCommand || effectiveStartCommand;
             if (restartCmd && !skipRestart) {
+                try {
+                    await stepStart(pool, logId!, 'remote.restart');
+                } catch { }
                 console.log(`[Deploy] Starting Windows service in ${effectiveRemotePath}: ${restartCmd}`);
                 const fullRestartCmd = `cd /d "${effectiveRemotePath}" && ${restartCmd}`;
                 const restartResult = await ssh.exec(fullRestartCmd);
@@ -286,16 +434,37 @@ export async function POST(req: NextRequest) {
                 if (restartResult.stderr) {
                     console.warn(`[Deploy] Restart command stderr:`, restartResult.stderr);
                 }
+
+                try {
+                    await stepSuccess(pool, logId!, 'remote.restart', '重启命令执行完成');
+                } catch { }
             } else if (!restartCmd) {
                 console.warn(`[Deploy] No restart command configured for this module.`);
+                try {
+                    await stepSuccess(pool, logId!, 'remote.restart', '未配置重启命令，跳过');
+                } catch { }
             } else if (skipRestart) {
                 console.log(`[Deploy] Skip Restart requested by user.`);
+                try {
+                    await stepSuccess(pool, logId!, 'remote.restart', '用户选择跳过重启');
+                } catch { }
             }
 
             // Windows Cleanup (Keep latest 3)
             console.log(`[Deploy] Windows cleanup initiated...`);
+            try {
+                await stepStart(pool, logId!, 'remote.cleanup');
+            } catch { }
             await ssh.exec(`powershell -Command "Get-ChildItem -Path '${backupDir}' -Filter '${basename}*${ext}' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 4 | Remove-Item -Force"`);
+
+            try {
+                await stepSuccess(pool, logId!, 'remote.cleanup', '清理完成（保留最近 3 个）');
+            } catch { }
         }
+
+        try {
+            await stepSuccess(pool, logId!, 'remote.swap', '替换完成');
+        } catch { }
 
         // 4. Log Success
         console.log(`[Deploy] Recording success log to DB...`);
@@ -325,6 +494,20 @@ export async function POST(req: NextRequest) {
         }
 
         // Fix: Use UPDATE instead of INSERT for failure too, if logId exists
+        if (logId) {
+            try {
+                // Mark first remote step as failed (best effort). Which one is "running" depends on where we died.
+                await pool.query(
+                    `
+                    UPDATE deploy_log_steps
+                    SET status = 'failed', finished_at = NOW(), message = ?
+                    WHERE deploy_log_id = ? AND status = 'running'
+                    `,
+                    [errorMsg, logId]
+                );
+            } catch { }
+        }
+
         if (currentUserId && currentModuleId && currentEnvId) {
             // We can't access logId easily in catch block if it's declared in try, 
             // but since we are refactoring, let's just do a best effort Insert if update fails or handle it better.
