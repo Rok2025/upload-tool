@@ -78,6 +78,8 @@ export default function DashboardLayout({
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [isChangelogOpen, setIsChangelogOpen] = useState(false);
 
+  const [currentVersion, setCurrentVersion] = useState('v1.2.0'); // Default to latest known
+
   useEffect(() => {
     setMounted(true);
     fetch('/api/auth/me').then(res => {
@@ -85,6 +87,16 @@ export default function DashboardLayout({
         res.json().then(setCurrentUser);
       }
     }).catch(() => { });
+
+    // Fetch current version
+    fetch('/changelog.json')
+      .then(res => res.json())
+      .then(data => {
+        if (data.currentVersion) {
+          setCurrentVersion(`v${data.currentVersion}`);
+        }
+      })
+      .catch(() => { });
   }, []);
 
   const handleLogout = async () => {
@@ -142,7 +154,7 @@ export default function DashboardLayout({
         </nav>
         <div className="sidebar-footer">
           <button className="version-btn" onClick={() => setIsChangelogOpen(true)}>
-            v1.1.0
+            {currentVersion}
           </button>
           <div className="copyright">© 2026 中科金审科技</div>
         </div>
