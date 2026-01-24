@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SSHService } from '@/lib/ssh';
+import { LocalDeploymentService } from '@/lib/local-deploy';
 import { decrypt } from '@/lib/crypto';
 import pool from '@/lib/db';
 import path from 'path';
@@ -7,7 +8,7 @@ import path from 'path';
 import { requireDeployPermission } from '@/lib/permissions';
 
 export async function POST(req: NextRequest) {
-    const ssh = new SSHService();
+    let deployer: SSHService | LocalDeploymentService | null = null;
     let currentUserId: number | null = null;
     let currentModuleId: any = null;
     let currentEnvId: any = null;
@@ -229,13 +230,26 @@ export async function POST(req: NextRequest) {
             await stepStart(pool, logId!, 'remote.connect', `连接目标服务器 (${env.host}:${env.port})`);
         } catch { }
 
-        await ssh.connect({
+        const isLocal = !!env.is_local || env.host === '127.0.0.1' || env.host === 'localhost';
+        console.log(`[Deploy] Target is ${isLocal ? 'LOCAL' : 'REMOTE'} (${env.host})`);
+
+        if (isLocal) {
+            deployer = new LocalDeploymentService();
+        } else {
+            console.log(`[Deploy] Initializing SSH Service...`);
+            deployer = new SSHService();
+        }
+
+        // Connect (or no-op for local)
+        await deployer.connect({
             host: env.host,
             port: env.port,
             username: env.username,
             password: password
         });
-        console.log(`[Deploy] SSH Connected.`);
+        if (!isLocal) {
+            console.log(`[Deploy] SSH Connected.`);
+        }
 
         try {
             await stepSuccess(pool, logId!, 'remote.connect', `已连接 (${env.host}:${env.port})`);
@@ -245,7 +259,7 @@ export async function POST(req: NextRequest) {
         console.log(`[Deploy] Detecting Target OS...`);
         let osType = 'linux';
         try {
-            const unameResult = await ssh.exec('uname -s');
+            const unameResult = await deployer!.exec('uname -s');
             const stdout = unameResult.stdout.toLowerCase();
             if (stdout.includes('linux')) {
                 osType = 'linux';
@@ -287,9 +301,9 @@ export async function POST(req: NextRequest) {
         // Ensure remote directories exist before upload
         console.log(`[Deploy] Ensuring remote directories exist...`);
         const remoteDir = path.dirname(uploadDestPath);
-        await ssh.exec(`mkdir -p "${remoteDir}"`);
+        await deployer!.exec(`mkdir -p "${remoteDir}"`);
         if (backupDir !== effectiveRemotePath) {
-            await ssh.exec(`mkdir -p "${backupDir}"`);
+            await deployer!.exec(`mkdir -p "${backupDir}"`);
         }
         console.log(`[Deploy] Remote directories ready.`);
 
@@ -303,7 +317,7 @@ export async function POST(req: NextRequest) {
         } catch { }
 
         console.log(`[Deploy] Uploading ${isZip ? 'ZIP ' : ''}package: ${localFilePath} -> ${uploadDestPath}`);
-        await ssh.putFile(localFilePath, uploadDestPath);
+        await deployer!.putFile(localFilePath, uploadDestPath);
 
         try {
             await stepSuccess(pool, logId!, 'remote.transfer', '文件传输完成');
@@ -321,11 +335,11 @@ export async function POST(req: NextRequest) {
 
             // 1. Backup existing directory if it exists
             console.log(`[Deploy] Creating backup of existing directory if it exists...`);
-            await ssh.exec(`cd "${parentDir}" && [ -d "${basename}" ] && zip -r "${backupFileNameLocal}" "${basename}" || echo "No directory to backup"`);
+            await deployer!.exec(`cd "${parentDir}" && [ -d "${basename}" ] && zip -r "${backupFileNameLocal}" "${basename}" || echo "No directory to backup"`);
 
             // 2. Unzip new package
             console.log(`[Deploy] Unzipping new package: ${fileName}`);
-            await ssh.exec(`cd "${parentDir}" && unzip -o "${fileName}"`);
+            await deployer!.exec(`cd "${parentDir}" && unzip -o "${fileName}"`);
 
             const restartCmd = effectiveRestartCommand || effectiveStartCommand;
             if (restartCmd && !skipRestart) {
@@ -334,7 +348,7 @@ export async function POST(req: NextRequest) {
                 } catch { }
                 console.log(`[Deploy] Running restart/start command in ${parentDir}: ${restartCmd}`);
                 const fullRestartCmd = `cd "${parentDir}" && ${restartCmd}`;
-                const restartResult = await ssh.exec(fullRestartCmd);
+                const restartResult = await deployer!.exec(fullRestartCmd);
                 console.log(`[Deploy] Restart command output:`, restartResult.stdout);
                 if (restartResult.stderr) {
                     console.warn(`[Deploy] Restart command stderr:`, restartResult.stderr);
@@ -362,8 +376,8 @@ export async function POST(req: NextRequest) {
         } else if (osType === 'linux') {
             console.log(`[Deploy] Using Linux Seamless Swap Strategy...`);
             // Swap files (Linux supports renaming even if active)
-            await ssh.exec(`[ -f "${remoteDestPath}" ] && mv "${remoteDestPath}" "${backupPath}"`);
-            await ssh.exec(`mv "${remoteNewPath}" "${remoteDestPath}"`);
+            await deployer!.exec(`[ -f "${remoteDestPath}" ] && mv "${remoteDestPath}" "${backupPath}"`);
+            await deployer!.exec(`mv "${remoteNewPath}" "${remoteDestPath}"`);
 
             const restartCmd = effectiveRestartCommand || effectiveStartCommand;
             if (restartCmd && !skipRestart) {
@@ -372,7 +386,7 @@ export async function POST(req: NextRequest) {
                 } catch { }
                 console.log(`[Deploy] Running Linux restart/start command in ${effectiveRemotePath}: ${restartCmd}`);
                 const fullRestartCmd = `cd "${effectiveRemotePath}" && ${restartCmd}`;
-                const restartResult = await ssh.exec(fullRestartCmd);
+                const restartResult = await deployer!.exec(fullRestartCmd);
                 console.log(`[Deploy] Restart command output:`, restartResult.stdout);
                 if (restartResult.stderr) {
                     console.warn(`[Deploy] Restart command stderr:`, restartResult.stderr);
@@ -399,7 +413,7 @@ export async function POST(req: NextRequest) {
             } catch { }
             // List backups, exclude active, skip top 3, delete the rest
             const remoteFileName = path.basename(remoteDestPath);
-            await ssh.exec(`cd "${backupDir}" && ls -1t ${basename}*${ext} | grep -v "^${remoteFileName}$" | tail -n +4 | xargs rm -f`);
+            await deployer!.exec(`cd "${backupDir}" && ls -1t ${basename}*${ext} | grep -v "^${remoteFileName}$" | tail -n +4 | xargs rm -f`);
 
             try {
                 await stepSuccess(pool, logId!, 'remote.cleanup', '清理完成（保留最近 3 个）');
@@ -412,15 +426,15 @@ export async function POST(req: NextRequest) {
 
             if (effectiveStopCommand) {
                 console.log(`[Deploy] Stopping Windows service: ${effectiveStopCommand}`);
-                await ssh.exec(effectiveStopCommand);
+                await deployer!.exec(effectiveStopCommand);
             }
 
             // Small delay to let process release lock if needed
             await new Promise(resolve => setTimeout(resolve, 2000));
 
             // Windows Rename (cmd /c move /y)
-            await ssh.exec(`cmd /c if exist "${remoteDestPath}" move /y "${remoteDestPath}" "${backupPath}"`);
-            await ssh.exec(`cmd /c move /y "${remoteNewPath}" "${remoteDestPath}"`);
+            await deployer!.exec(`cmd /c if exist "${remoteDestPath}" move /y "${remoteDestPath}" "${backupPath}"`);
+            await deployer!.exec(`cmd /c move /y "${remoteNewPath}" "${remoteDestPath}"`);
 
             const restartCmd = effectiveRestartCommand || effectiveStartCommand;
             if (restartCmd && !skipRestart) {
@@ -429,7 +443,7 @@ export async function POST(req: NextRequest) {
                 } catch { }
                 console.log(`[Deploy] Starting Windows service in ${effectiveRemotePath}: ${restartCmd}`);
                 const fullRestartCmd = `cd /d "${effectiveRemotePath}" && ${restartCmd}`;
-                const restartResult = await ssh.exec(fullRestartCmd);
+                const restartResult = await deployer!.exec(fullRestartCmd);
                 console.log(`[Deploy] Restart command output:`, restartResult.stdout);
                 if (restartResult.stderr) {
                     console.warn(`[Deploy] Restart command stderr:`, restartResult.stderr);
@@ -455,7 +469,7 @@ export async function POST(req: NextRequest) {
             try {
                 await stepStart(pool, logId!, 'remote.cleanup');
             } catch { }
-            await ssh.exec(`powershell -Command "Get-ChildItem -Path '${backupDir}' -Filter '${basename}*${ext}' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 4 | Remove-Item -Force"`);
+            await deployer!.exec(`powershell -Command "Get-ChildItem -Path '${backupDir}' -Filter '${basename}*${ext}' | Sort-Object LastWriteTime -Descending | Select-Object -Skip 4 | Remove-Item -Force"`);
 
             try {
                 await stepSuccess(pool, logId!, 'remote.cleanup', '清理完成（保留最近 3 个）');
@@ -542,6 +556,8 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ error: errorMsg }, { status: 500 });
     } finally {
-        ssh.disconnect();
+        if (deployer) {
+            deployer.disconnect();
+        }
     }
 }

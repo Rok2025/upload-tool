@@ -8,6 +8,7 @@ interface Environment {
     host: string;
     port: number;
     username: string;
+    is_local?: boolean;
     last_test_status?: 'success' | 'error' | null;
     last_test_message?: string | null;
 }
@@ -117,7 +118,7 @@ export default function ConfigPage() {
 
     // Form states
     const [projectForm, setProjectForm] = useState({ name: '', description: '', environment_id: 0, base_path: '' });
-    const [envForm, setEnvForm] = useState({ name: '', host: '', port: 22, username: '', password: '' });
+    const [envForm, setEnvForm] = useState({ name: '', host: '', port: 22, username: '', password: '', is_local: false });
     const [moduleForm, setModuleForm] = useState<{
         name: string;
         type: string;
@@ -146,7 +147,7 @@ export default function ConfigPage() {
 
     // Reset forms
     const resetProjectForm = () => { setProjectForm({ name: '', description: '', environment_id: 0, base_path: '' }); setEditingProject(null); };
-    const resetEnvForm = () => { setEnvForm({ name: '', host: '', port: 22, username: '', password: '' }); setEditingEnv(null); };
+    const resetEnvForm = () => { setEnvForm({ name: '', host: '', port: 22, username: '', password: '', is_local: false }); setEditingEnv(null); };
     const resetModuleForm = () => {
         setModuleForm({
             name: '',
@@ -176,7 +177,7 @@ export default function ConfigPage() {
 
     const openEditEnv = (e: Environment) => {
         setEditingEnv(e);
-        setEnvForm({ name: e.name, host: e.host, port: e.port, username: e.username, password: '' });
+        setEnvForm({ name: e.name, host: e.host, port: e.port, username: e.username, password: '', is_local: !!e.is_local });
         setShowEnvModal(true);
     };
 
@@ -318,6 +319,29 @@ export default function ConfigPage() {
         setShowEnvModal(true);
     };
 
+    const handleSetLocal = async (env: Environment) => {
+        if (env.is_local) return; // Already local
+
+        const currentLocal = environments.find(e => e.is_local);
+        if (currentLocal) {
+            if (!confirm(`已经存在 "${currentLocal.name}" 作为部署服务器 (本机)。\n\n是否继续设定 "${env.name}" 为新的部署服务器？\n(原部署服务器将自动取消该标记)`)) return;
+        } else {
+            if (!confirm(`确认将 "${env.name}" 设为部署服务器 (本机) 吗？`)) return;
+        }
+
+        try {
+            const res = await fetch('/api/environments', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: env.id, name: env.name, host: env.host, port: env.port, username: env.username, is_local: true })
+            });
+            if (!res.ok) throw new Error('操作失败');
+            await fetchData();
+        } catch (error: any) {
+            alert(error.message);
+        }
+    };
+
     if (loading) return <div className="loading">加载中...</div>;
 
     return (
@@ -353,7 +377,7 @@ export default function ConfigPage() {
                             <h2>服务器配置</h2>
                             <button type="button" className="btn-primary" onClick={handleAddEnv}>+ 新增服务器</button>
                         </div>
-                        <div className="env-grid">
+                        <div className="env-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
                             {environments.map(env => {
                                 const activeResult = testResults[env.id];
                                 const persistedStatus = env.last_test_status;
@@ -361,7 +385,16 @@ export default function ConfigPage() {
                                 const currentMsg = activeResult ? activeResult.message : (persistedStatus ? env.last_test_message : '');
 
                                 return (
-                                    <div key={env.id} className="env-badge">
+                                    <div
+                                        key={env.id}
+                                        className="env-badge"
+                                        style={{
+                                            background: env.is_local ? '#f5f3ff' : undefined,
+                                            borderColor: env.is_local ? '#8b5cf6' : undefined,
+                                            borderWidth: env.is_local ? '1px' : undefined,
+                                            borderStyle: env.is_local ? 'solid' : undefined
+                                        }}
+                                    >
                                         <span
                                             className={`dot ${currentStatus}`}
                                             onMouseEnter={() => setVisibleMsgId(env.id)}
@@ -370,6 +403,7 @@ export default function ConfigPage() {
                                         ></span>
                                         <div className="env-info">
                                             <strong>{env.name}</strong>
+                                            {!!env.is_local && <span className="tag locked" style={{ marginLeft: '8px', fontSize: '10px', padding: '2px 6px' }}>本机 (部署服务)</span>}
                                             <span className="detail">{env.username}@{env.host}:{env.port}</span>
                                         </div>
                                         <div className="env-actions">
@@ -382,6 +416,15 @@ export default function ConfigPage() {
                                             >
                                                 {testingEnvId === env.id ? '⌛' : '🔌'}
                                             </button>
+                                            <button
+                                                type="button"
+                                                className={`icon-btn ${env.is_local ? 'active' : ''}`}
+                                                onClick={() => handleSetLocal(env)}
+                                                title={env.is_local ? "这是部署服务器 (本机)" : "设为部署服务器 (本机)"}
+                                                style={{ color: env.is_local ? '#646cff' : undefined }}
+                                            >
+                                                🏠
+                                            </button>
                                             <button type="button" className="icon-btn" onClick={() => openEditEnv(env)}>✏️</button>
                                             <button type="button" className="icon-btn danger" onClick={() => setShowDeleteConfirm({ type: 'environments', id: env.id, name: env.name })}>🗑️</button>
                                         </div>
@@ -393,8 +436,8 @@ export default function ConfigPage() {
                                     </div>
                                 );
                             })}
-                            {environments.length === 0 && <p className="empty-text">暂无服务器配置</p>}
                         </div>
+                        {environments.length === 0 && <p className="empty-text">暂无服务器配置</p>}
                     </div>
                 )}
 
@@ -487,7 +530,7 @@ export default function ConfigPage() {
 
             {/* Env Config Modal */}
             {showEnvConfigModal && (
-                <div className="modal-overlay" onClick={() => setShowEnvConfigModal(false)}>
+                <div className="modal-overlay">
                     <div className="modal-content wide" onClick={e => e.stopPropagation()}>
                         <div className="header-actions">
                             <h3>模块服务器特定配置: {editingModule?.name}</h3>
@@ -531,7 +574,7 @@ export default function ConfigPage() {
 
             {/* Env Config Form Modal */}
             {showEnvConfigFormModal && (
-                <div className="modal-overlay" onClick={() => setShowEnvConfigFormModal(false)}>
+                <div className="modal-overlay">
                     <div className="modal-content" onClick={e => e.stopPropagation()}>
                         <h3>{editingEnvConfig ? '编辑服务器配置' : '新增服务器配置'}</h3>
                         <form onSubmit={handleSaveEnvConfig}>
@@ -607,7 +650,7 @@ export default function ConfigPage() {
 
             {/* Project Modal */}
             {showProjectModal && (
-                <div className="modal-overlay" onClick={() => setShowProjectModal(false)}>
+                <div className="modal-overlay">
                     <div className="modal-content" onClick={e => e.stopPropagation()}>
                         <h3>{editingProject ? '编辑项目' : '添加项目'}</h3>
                         <form onSubmit={handleSaveProject}>
@@ -702,7 +745,7 @@ export default function ConfigPage() {
 
             {/* Module Modal */}
             {showModuleModal && (
-                <div className="modal-overlay" onClick={() => setShowModuleModal(false)}>
+                <div className="modal-overlay">
                     <div className="modal-content wide" onClick={e => e.stopPropagation()}>
                         <h3>{editingModule ? '编辑模块' : '添加模块'}</h3>
                         <form onSubmit={handleSaveModule}>
