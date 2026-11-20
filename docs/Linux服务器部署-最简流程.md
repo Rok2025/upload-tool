@@ -40,7 +40,7 @@ npm run build
 
 ```bash
 # 使用 scp 上传
-scp upload-tool-full-20260118.tar.gz root@1.92.197.43:/opt/
+scp upload-tool-full-20260304.tar.gz root@1.92.197.43:/opt/
 ```
 
 ### 2.2 服务器端解压与重启
@@ -54,7 +54,7 @@ mkdir -p /opt/upload-tool
 cd /opt/upload-tool
 
 # 2. 解压文件 (覆盖旧文件)
-tar -xzf /tmp/upload-tool-full-20260118.tar.gz
+tar -xzf /tmp/upload-tool-full-20260304.tar.gz
 
 # 3. 确保上传目录权限 (解决无法上传文件的问题)
 mkdir -p uploads/tmp uploads/archive

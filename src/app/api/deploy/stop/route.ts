@@ -4,6 +4,7 @@ import { decrypt } from '@/lib/crypto';
 import pool from '@/lib/db';
 import path from 'path';
 import { requireDeployPermission } from '@/lib/permissions';
+import { syslogInfo, syslogError } from '@/lib/syslog';
 
 export async function POST(req: NextRequest) {
     const ssh = new SSHService();
@@ -75,7 +76,8 @@ export async function POST(req: NextRequest) {
             host: env.host,
             port: env.port,
             username: env.username,
-            password: password
+            password: password,
+            connectTimeout: env.connect_timeout || 20
         });
 
         const fullStopCmd = effectiveRemotePath ? `cd "${effectiveRemotePath}" && ${stopCmd}` : stopCmd;
@@ -88,10 +90,20 @@ export async function POST(req: NextRequest) {
             [user.id, moduleId, effectiveEnvironmentId, 'success', 'stop', `Manual Stop Executed: ${fullStopCmd}`, start_time, new Date()]
         );
 
+        syslogInfo('deploy', 'stop-success', `停止服务成功: ${module.name} @ ${env.host}`, {
+            targetHost: env.host,
+            userId: user.id,
+            username: user.username,
+            detail: fullStopCmd,
+        });
+
         return NextResponse.json({ message: '停止命令已发送', output: result.stdout });
 
     } catch (error: any) {
         console.error('[Stop API Error]:', error);
+        syslogError('deploy', 'stop-failed', `停止服务失败: ${error.message}`, {
+            detail: error.message,
+        });
         if (currentModuleId && currentEnvId) {
             try {
                 const user = await requireDeployPermission(req, null as any);

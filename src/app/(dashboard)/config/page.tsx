@@ -9,6 +9,7 @@ interface Environment {
     port: number;
     username: string;
     is_local?: boolean;
+    connect_timeout?: number;
     last_test_status?: 'success' | 'error' | null;
     last_test_message?: string | null;
 }
@@ -118,7 +119,7 @@ export default function ConfigPage() {
 
     // Form states
     const [projectForm, setProjectForm] = useState({ name: '', description: '', environment_id: 0, base_path: '' });
-    const [envForm, setEnvForm] = useState({ name: '', host: '', port: 22, username: '', password: '', is_local: false });
+    const [envForm, setEnvForm] = useState({ name: '', host: '', port: 22, username: '', password: '', is_local: false, connect_timeout: 20 });
     const [moduleForm, setModuleForm] = useState<{
         name: string;
         type: string;
@@ -147,7 +148,7 @@ export default function ConfigPage() {
 
     // Reset forms
     const resetProjectForm = () => { setProjectForm({ name: '', description: '', environment_id: 0, base_path: '' }); setEditingProject(null); };
-    const resetEnvForm = () => { setEnvForm({ name: '', host: '', port: 22, username: '', password: '', is_local: false }); setEditingEnv(null); };
+    const resetEnvForm = () => { setEnvForm({ name: '', host: '', port: 22, username: '', password: '', is_local: false, connect_timeout: 20 }); setEditingEnv(null); };
     const resetModuleForm = () => {
         setModuleForm({
             name: '',
@@ -177,7 +178,7 @@ export default function ConfigPage() {
 
     const openEditEnv = (e: Environment) => {
         setEditingEnv(e);
-        setEnvForm({ name: e.name, host: e.host, port: e.port, username: e.username, password: '', is_local: !!e.is_local });
+        setEnvForm({ name: e.name, host: e.host, port: e.port, username: e.username, password: '', is_local: !!e.is_local, connect_timeout: e.connect_timeout || 20 });
         setShowEnvModal(true);
     };
 
@@ -716,6 +717,10 @@ export default function ConfigPage() {
                             <div className="form-group">
                                 <label>密码 {editingEnv && <span className="hint">(留空表示不修改)</span>}</label>
                                 <input type="password" required={!editingEnv} value={envForm.password} onChange={e => setEnvForm({ ...envForm, password: e.target.value })} />
+                            </div>
+                            <div className="form-group">
+                                <label>连接超时 <span className="hint">(秒，连接慢的服务器可适当增大)</span></label>
+                                <input type="number" min={5} max={120} value={envForm.connect_timeout} onChange={e => setEnvForm({ ...envForm, connect_timeout: parseInt(e.target.value) || 20 })} />
                             </div>
 
                             <div className="test-connection-section">

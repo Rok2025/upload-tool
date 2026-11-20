@@ -8,7 +8,7 @@ export async function GET() {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     try {
-        const [rows]: any = await pool.query('SELECT id, name, host, port, username, is_local, last_test_status, last_test_message FROM environments ORDER BY created_at DESC');
+        const [rows]: any = await pool.query('SELECT id, name, host, port, username, is_local, connect_timeout, last_test_status, last_test_message FROM environments ORDER BY created_at DESC');
         return NextResponse.json(rows);
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-        const { name, host, port, username, password, is_local } = await req.json();
+        const { name, host, port, username, password, is_local, connect_timeout } = await req.json();
         const encryptedPassword = encrypt(password);
 
         // If setting as local, unset all others first
@@ -31,8 +31,8 @@ export async function POST(req: NextRequest) {
         }
 
         const [result]: any = await pool.query(
-            'INSERT INTO environments (name, host, port, username, password_encrypted, is_local) VALUES (?, ?, ?, ?, ?, ?)',
-            [name, host, port || 22, username, encryptedPassword, is_local || false]
+            'INSERT INTO environments (name, host, port, username, password_encrypted, is_local, connect_timeout) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [name, host, port || 22, username, encryptedPassword, is_local || false, connect_timeout || 20]
         );
 
         return NextResponse.json({ id: result.insertId, name });
@@ -48,7 +48,7 @@ export async function PUT(req: NextRequest) {
     }
 
     try {
-        const { id, name, host, port, username, password, is_local } = await req.json();
+        const { id, name, host, port, username, password, is_local, connect_timeout } = await req.json();
 
         // If setting as local, unset all others first
         if (is_local) {
@@ -58,13 +58,13 @@ export async function PUT(req: NextRequest) {
         if (password) {
             const encryptedPassword = encrypt(password);
             await pool.query(
-                'UPDATE environments SET name = ?, host = ?, port = ?, username = ?, password_encrypted = ?, is_local = ? WHERE id = ?',
-                [name, host, port || 22, username, encryptedPassword, is_local || false, id]
+                'UPDATE environments SET name = ?, host = ?, port = ?, username = ?, password_encrypted = ?, is_local = ?, connect_timeout = ? WHERE id = ?',
+                [name, host, port || 22, username, encryptedPassword, is_local || false, connect_timeout || 20, id]
             );
         } else {
             await pool.query(
-                'UPDATE environments SET name = ?, host = ?, port = ?, username = ?, is_local = ? WHERE id = ?',
-                [name, host, port || 22, username, is_local || false, id]
+                'UPDATE environments SET name = ?, host = ?, port = ?, username = ?, is_local = ?, connect_timeout = ? WHERE id = ?',
+                [name, host, port || 22, username, is_local || false, connect_timeout || 20, id]
             );
         }
 

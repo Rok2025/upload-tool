@@ -3,6 +3,7 @@ import { SSHService } from '@/lib/ssh';
 import { decrypt } from '@/lib/crypto';
 import pool from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { syslogInfo, syslogError } from '@/lib/syslog';
 
 export async function POST(req: NextRequest) {
     const session = await getSession();
@@ -10,12 +11,11 @@ export async function POST(req: NextRequest) {
 
     const ssh = new SSHService();
     let testId: any = null;
+    let connectionConfig: any = null;
     try {
         const body = await req.json();
-        const { id, host, port, username, password } = body;
+        const { id, host, port, username, password, connect_timeout } = body;
         testId = id;
-
-        let connectionConfig: any;
 
         if (id) {
             // Test existing environment
@@ -28,7 +28,8 @@ export async function POST(req: NextRequest) {
                 host: env.host,
                 port: env.port,
                 username: env.username,
-                password: decrypt(env.password_encrypted)
+                password: decrypt(env.password_encrypted),
+                connectTimeout: env.connect_timeout || 20
             };
         } else {
             // Test temporary connection info (from modal form)
@@ -39,7 +40,8 @@ export async function POST(req: NextRequest) {
                 host,
                 port: port || 22,
                 username,
-                password
+                password,
+                connectTimeout: connect_timeout || 20
             };
         }
 
@@ -57,6 +59,12 @@ export async function POST(req: NextRequest) {
             );
         }
 
+        syslogInfo('ssh', 'test-connection', `SSH 连接测试成功: ${connectionConfig.host}:${connectionConfig.port}`, {
+            targetHost: connectionConfig.host,
+            userId: session.id,
+            username: session.username,
+        });
+
         return NextResponse.json({ success: true, message: '连接成功！' });
     } catch (error: any) {
         console.error('Connection test failed:', error);
@@ -67,6 +75,13 @@ export async function POST(req: NextRequest) {
         } else if (error.message.includes('Authentication failure')) {
             errorMsg = '身份验证失败，请检查用户名 and 密码。';
         }
+
+        syslogError('ssh', 'test-connection', `SSH 连接测试失败: ${errorMsg}`, {
+            targetHost: connectionConfig?.host || '',
+            userId: session.id,
+            username: session.username,
+            detail: error.message,
+        });
 
         // Update database if it's an existing environment
         if (testId) {

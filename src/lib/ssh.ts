@@ -7,6 +7,7 @@ export interface SSHConfig {
     username: string;
     password?: string;
     privateKey?: string;
+    connectTimeout?: number; // in seconds, default 20
 }
 
 export class SSHService {
@@ -17,13 +18,15 @@ export class SSHService {
     }
 
     async connect(config: SSHConfig): Promise<void> {
+        const { connectTimeout, ...sshConfig } = config;
+        const timeoutMs = (connectTimeout || 20) * 1000;
         return new Promise((resolve, reject) => {
             this.client
                 .on('ready', resolve)
                 .on('error', reject)
                 .connect({
-                    ...config,
-                    readyTimeout: 10000 // 10 seconds timeout for handshake
+                    ...sshConfig,
+                    readyTimeout: timeoutMs
                 });
         });
     }

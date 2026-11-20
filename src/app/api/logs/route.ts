@@ -81,7 +81,8 @@ export async function GET(req: NextRequest) {
                     host: env.host,
                     port: env.port,
                     username: env.username,
-                    password: decrypt(env.password_encrypted)
+                    password: decrypt(env.password_encrypted),
+                    connectTimeout: env.connect_timeout || 20
                 });
                 console.log(`[SSE Log] Connected successfully. Starting tail on ${logPath}`);
 

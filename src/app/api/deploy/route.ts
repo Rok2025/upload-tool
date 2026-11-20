@@ -4,6 +4,7 @@ import { LocalDeploymentService } from '@/lib/local-deploy';
 import { decrypt } from '@/lib/crypto';
 import pool from '@/lib/db';
 import path from 'path';
+import { syslogInfo, syslogError } from '@/lib/syslog';
 
 import { requireDeployPermission } from '@/lib/permissions';
 
@@ -245,10 +246,16 @@ export async function POST(req: NextRequest) {
             host: env.host,
             port: env.port,
             username: env.username,
-            password: password
+            password: password,
+            connectTimeout: env.connect_timeout || 20
         });
         if (!isLocal) {
             console.log(`[Deploy] SSH Connected.`);
+            syslogInfo('deploy', 'ssh-connect', `部署连接服务器成功: ${env.host}:${env.port}`, {
+                targetHost: env.host,
+                userId: currentUserId!,
+                username: user.username,
+            });
         }
 
         try {

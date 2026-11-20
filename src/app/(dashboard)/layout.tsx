@@ -117,6 +117,7 @@ export default function DashboardLayout({
     { href: '/history', label: '部署历史', icon: '📜' },
     { href: '/runtime-logs', label: '运行日志', icon: '📋' },
     { href: '/config', label: '项目配置', icon: '⚙️' },
+    { href: '/system-logs', label: '系统日志', icon: '🔍' },
     { href: '/users', label: '用户管理', icon: '👥', adminOnly: true },
   ];
 
